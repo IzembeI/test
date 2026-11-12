@@ -274,8 +274,8 @@ struct PrintTab: View {
                 .disabled(m.text.isEmpty)
                 .opacity(m.text.isEmpty ? 0.5 : 1)
             }
-            if !m.store.isShared {
-                Text("Связь с клавиатурой недоступна при этой подписи. Скопируйте текст и вставьте его кнопкой буфера на панели клавиатуры (долгое нажатие «123»).")
+            if !m.store.linked {
+                Text("Клавиатура пока не отвечает. Включите для неё «Полный доступ» в настройках iOS и один раз откройте её в любом поле ввода.")
                     .font(m.font(12.5)).opacity(0.56)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -796,8 +796,8 @@ struct HelpPage: View {
             } label: { Label("Открыть настройки", systemImage: "arrow.up.forward.app") }
                 .buttonStyle(GlassButton(prominent: true))
             HStack(spacing: 8) {
-                Circle().fill(m.store.isShared ? Color.green : Color.orange).frame(width: 8, height: 8)
-                Text(m.store.isShared ? "Связь приложения и клавиатуры работает" : "Связь недоступна — текст передаётся через буфер")
+                Circle().fill(m.store.linked ? Color.green : Color.orange).frame(width: 8, height: 8)
+                Text(m.store.linked ? "Связь приложения и клавиатуры работает" : "Клавиатура не отвечает — включите «Полный доступ» и откройте её один раз")
                     .font(m.font(12.5)).opacity(0.7)
                 Spacer()
             }

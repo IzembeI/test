@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import UIKit
 
 // MARK: - Settings shared between the app and the keyboard
 
@@ -114,17 +115,80 @@ final class Store {
         return g.components(separatedBy: ".").first
     }
 
+    // MARK: Bridge
+    //
+    // When the signing tool strips the App Group, the app and the keyboard cannot see each
+    // other's files. They then talk through two named pasteboards (one per direction), which
+    // iOS shares between an app and its extensions once the keyboard has Full Access.
+
+    static let isKeyboard = Bundle.main.bundlePath.hasSuffix(".appex")
+    private static let appFiles: Set<String> = ["settings.json", "text.txt", "command.json"]
+    private static let keyboardFiles: Set<String> = ["status.json", "stats.json"]
+    private var mine: Set<String> { Store.isKeyboard ? Store.keyboardFiles : Store.appFiles }
+    private var theirs: Set<String> { Store.isKeyboard ? Store.appFiles : Store.keyboardFiles }
+
+    private lazy var outBoard = UIPasteboard(
+        name: UIPasteboard.Name("com.werx.autotyper.bridge." + (Store.isKeyboard ? "kb" : "app")), create: true)
+    private lazy var inBoard = UIPasteboard(
+        name: UIPasteboard.Name("com.werx.autotyper.bridge." + (Store.isKeyboard ? "app" : "kb")), create: true)
+    private var outItems: [String: Any] = [:]
+    private var inCache: [String: Data] = [:]
+    private var inCount = -1
+    private var localCount: [String: Int] = [:]
+
+    private func boardType(_ name: String) -> String {
+        "com.werx.autotyper." + name.replacingOccurrences(of: ".", with: "-")
+    }
+
+    /// True when the other side is reachable: shared container, or data arriving over the bridge.
+    var linked: Bool { isShared || (inBoard?.numberOfItems ?? 0) > 0 }
+
+    func readData(_ name: String) -> Data? {
+        if !isShared, theirs.contains(name), let pb = inBoard {
+            let count = pb.changeCount
+            if count != inCount {
+                inCount = count
+                inCache.removeAll()
+            }
+            // A local edit of the other side's file wins until that side writes again.
+            if localCount[name] != count {
+                if let d = inCache[name] { return d }
+                if let d = pb.data(forPasteboardType: boardType(name)) {
+                    inCache[name] = d
+                    return d
+                }
+            }
+        }
+        return try? Data(contentsOf: url(name))
+    }
+
+    func writeData(_ name: String, _ data: Data) {
+        try? data.write(to: url(name), options: .atomic)
+        guard !isShared else { return }
+        if mine.contains(name) {
+            if outItems.isEmpty {
+                for n in mine where n != name {
+                    if let d = try? Data(contentsOf: url(n)) { outItems[boardType(n)] = d }
+                }
+            }
+            outItems[boardType(name)] = data
+            outBoard?.setItems([outItems], options: [:])
+        } else if theirs.contains(name) {
+            localCount[name] = inBoard?.changeCount
+        }
+    }
+
     var fontsDir: URL { base.appendingPathComponent("Fonts", isDirectory: true) }
     func url(_ name: String) -> URL { base.appendingPathComponent(name) }
 
     func load<T: Decodable>(_ type: T.Type, _ name: String) -> T? {
-        guard let d = try? Data(contentsOf: url(name)) else { return nil }
+        guard let d = readData(name) else { return nil }
         return try? JSONDecoder().decode(type, from: d)
     }
 
     /// Decodes a file saved by an older version: missing keys take their default values.
     func loadMerged<T: Codable>(_ defaults: T, _ name: String) -> T {
-        guard let file = try? Data(contentsOf: url(name)),
+        guard let file = readData(name),
               let saved = (try? JSONSerialization.jsonObject(with: file)) as? [String: Any],
               let base = try? JSONEncoder().encode(defaults),
               var dict = (try? JSONSerialization.jsonObject(with: base)) as? [String: Any] else { return defaults }
@@ -136,7 +200,7 @@ final class Store {
 
     func save<T: Encodable>(_ value: T, _ name: String) {
         guard let d = try? JSONEncoder().encode(value) else { return }
-        try? d.write(to: url(name), options: .atomic)
+        writeData(name, d)
     }
 
     var settings: TyperSettings {
@@ -145,8 +209,8 @@ final class Store {
     }
 
     var text: String {
-        get { (try? String(contentsOf: url("text.txt"), encoding: .utf8)) ?? "" }
-        set { try? newValue.write(to: url("text.txt"), atomically: true, encoding: .utf8) }
+        get { readData("text.txt").flatMap { String(data: $0, encoding: .utf8) } ?? "" }
+        set { writeData("text.txt", Data(newValue.utf8)) }
     }
 
     var status: TyperStatus {

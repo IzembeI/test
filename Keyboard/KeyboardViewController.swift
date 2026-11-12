@@ -72,6 +72,7 @@ final class KeyboardViewController: UIInputViewController {
         poll?.invalidate()
         poll = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in self?.tick() }
         tick()
+        saveStatus()        // lets the app see that the keyboard is reachable
     }
 
     override func viewWillDisappear(_ animated: Bool) {
