@@ -1,0 +1,144 @@
+<title>AutoTyper — дизайн</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: one phone-sized mock of the app in the centre, theme switcher above it. Single dark look, as in the app. */
+:root{
+  color-scheme:dark;
+  --page:#08080a; --ink:#f4f4f6; --muted:rgba(244,244,246,.6);
+  --accent:#ffffff; --on-accent:#000; --bg0:#000; --bg1:#fff; --bg2:#7a7a80;
+  --glass:rgba(255,255,255,.09); --stroke:rgba(255,255,255,.28);
+  --ui:ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+body{background:var(--page);color:var(--ink);font-family:var(--ui);
+  padding-block:20px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;flex-direction:column;align-items:center;gap:16px}
+.note{color:var(--muted);font-size:13px;text-align:center;max-width:380px;line-height:1.45;margin:0}
+.themes{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.themes button{font:600 13px var(--ui);color:var(--ink);background:var(--glass);border:1px solid var(--stroke);border-radius:999px;padding:8px 14px;cursor:pointer}
+.themes button[aria-pressed="true"]{background:var(--ink);color:var(--page)}
+button:focus-visible,.tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.phone{position:relative;width:100%;max-width:390px;height:780px;border-radius:44px;overflow:hidden;background:var(--bg0);
+  border:1px solid var(--stroke);box-shadow:0 30px 80px rgba(0,0,0,.6)}
+.blob{position:absolute;width:75%;aspect-ratio:1;border-radius:50%;filter:blur(70px);opacity:.5;animation:drift 18s ease-in-out infinite alternate}
+.blob.a{background:var(--bg1);left:-20%;top:-8%}
+.blob.b{background:var(--bg2);right:-25%;top:30%;animation-duration:23s;animation-direction:alternate-reverse}
+.blob.c{background:var(--bg1);left:5%;bottom:-18%;animation-duration:27s}
+@keyframes drift{to{transform:translate(28%,22%) scale(1.25)}}
+.dim{position:absolute;inset:0;background:rgba(0,0,0,.3)}
+.screen{position:absolute;inset:0;overflow-y:auto;padding:22px 16px 110px;display:flex;flex-direction:column;gap:14px;scrollbar-width:none}
+.head{display:flex;justify-content:space-between;align-items:baseline}
+.logo{font-size:32px;font-weight:800;letter-spacing:-.5px;
+  background:linear-gradient(100deg,var(--ink) 35%,#fff 50%,var(--ink) 65%) 0 0/250% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
+  animation:shine 2.6s linear infinite;filter:drop-shadow(0 0 10px rgba(255,255,255,.25))}
+@keyframes shine{from{background-position:120% 0}to{background-position:-130% 0}}
+.head span{color:var(--muted);font-size:14px}
+.card{background:var(--glass);backdrop-filter:blur(24px) saturate(1.4);-webkit-backdrop-filter:blur(24px) saturate(1.4);
+  border:1px solid var(--stroke);border-radius:24px;padding:16px;display:flex;flex-direction:column;gap:12px;
+  box-shadow:0 8px 24px rgba(0,0,0,.28);animation:rise .5s cubic-bezier(.2,.9,.3,1.1) backwards}
+.card:nth-child(3){animation-delay:.07s}.card:nth-child(4){animation-delay:.14s}.card:nth-child(5){animation-delay:.21s}
+@keyframes rise{from{opacity:0;transform:translateY(22px) scale(.97)}}
+h3{margin:0;font-size:17px;font-weight:700;display:flex;gap:8px;align-items:center}
+h3 i{font-style:normal;color:var(--accent)}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:14.5px}
+.row small{display:block;color:var(--muted);font-size:11.5px}
+.val{font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums;background:rgba(255,255,255,.08);border-radius:8px;padding:3px 8px;white-space:nowrap}
+.hint{color:var(--muted);font-size:12px;line-height:1.4;margin:0}
+.slider{height:4px;border-radius:2px;background:rgba(255,255,255,.18);position:relative}
+.slider::before{content:"";position:absolute;inset:0 auto 0 0;width:var(--p);background:var(--accent);border-radius:2px}
+.slider::after{content:"";position:absolute;left:var(--p);top:50%;width:22px;height:22px;border-radius:50%;background:#fff;transform:translate(-50%,-50%);box-shadow:0 2px 6px rgba(0,0,0,.4)}
+.btns{display:flex;gap:10px}
+.btn{flex:1;text-align:center;font-weight:700;font-size:15px;padding:13px 10px;border-radius:18px;background:var(--glass);border:1px solid var(--stroke)}
+.btn.pri{background:linear-gradient(135deg,var(--accent),color-mix(in srgb,var(--accent) 72%,transparent));color:var(--on-accent);border-color:rgba(255,255,255,.55);box-shadow:0 4px 18px color-mix(in srgb,var(--accent) 35%,transparent)}
+.seg{display:flex;padding:4px;border-radius:999px;background:var(--glass);border:1px solid var(--stroke);font-size:13.5px}
+.seg b{flex:1;text-align:center;padding:8px 4px;border-radius:999px;font-weight:500}
+.seg b.on{background:var(--accent);color:var(--on-accent);font-weight:700}
+.tog{flex:none;width:48px;height:29px;border-radius:15px;background:var(--accent);position:relative}
+.tog::after{content:"";position:absolute;right:2px;top:2px;width:25px;height:25px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.4)}
+.tog.off{background:rgba(255,255,255,.2)}.tog.off::after{right:auto;left:2px}
+.ring{flex:none;width:66px;height:66px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:14px;
+  background:radial-gradient(closest-side,rgba(20,20,22,.85) 80%,transparent 81%),conic-gradient(var(--accent) 42%,rgba(255,255,255,.15) 0)}
+.editor{min-height:120px;font-size:14.5px;line-height:1.45}
+.typed{min-height:66px;font-size:14.5px;line-height:1.45}
+.typed::after{content:"";display:inline-block;width:2px;height:1em;background:var(--accent);vertical-align:-2px;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+.sw{display:flex;gap:10px}
+.sw div{flex:1;text-align:center;font-size:11.5px}
+.sw i{display:block;height:56px;border-radius:15px;border:1px solid var(--stroke);margin-bottom:5px}
+.sw .on i{border:2.5px solid var(--accent)}
+.dot{width:26px;height:26px;border-radius:50%;border:2px solid rgba(255,255,255,.7);flex:none}
+.step{display:flex;gap:11px;font-size:13.5px;line-height:1.4}
+.step b{flex:none;width:25px;height:25px;border-radius:50%;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;font-size:13px}
+.kb{background:rgba(120,120,128,.28);border-radius:14px;padding:6px 3px;display:flex;flex-direction:column;gap:7px}
+.kb div{display:flex;justify-content:center;gap:4px}
+.kb span{flex:1;max-width:30px;height:36px;border-radius:5px;background:#6b6b6b;color:#fff;display:grid;place-items:center;font-size:17px;box-shadow:0 1px 0 rgba(0,0,0,.5);transition:background .05s}
+.kb span.w{max-width:none;flex:5;font-size:12px}.kb span.s{background:#474747;flex:1.4;max-width:44px;font-size:12px}
+.kb span.hit{background:#fff;color:#000;transform:translateY(-3px) scale(1.25)}
+.tabs{position:absolute;left:16px;right:16px;bottom:14px;display:flex;padding:6px;border-radius:26px;background:var(--glass);
+  backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border:1px solid var(--stroke);box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.tab{flex:1;border:0;background:none;color:var(--muted);font:500 10px var(--ui);padding:7px 0;border-radius:18px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;transition:background .25s,color .25s}
+.tab i{font-style:normal;font-size:18px;line-height:1}
+.tab[aria-selected="true"]{background:var(--accent);color:var(--on-accent)}
+@media (prefers-reduced-motion:reduce){.blob,.logo,.card{animation:none}}
+</style>
+
+<div class="themes" id="themes"></div>
+<div class="phone">
+  <div class="blob a"></div><div class="blob b"></div><div class="blob c"></div><div class="dim"></div>
+  <div class="screen" id="screen"></div>
+  <div class="tabs" id="tabs" role="tablist"></div>
+</div>
+<p class="note">Макет экранов приложения. Вкладки и темы переключаются; ползунки и кнопки здесь нарисованы, в приложении они рабочие, а числа можно вводить вручную.</p>
+
+<script>
+const themes={
+  mono:["Моно","#ffffff","#000","#000000","#ffffff","#7a7a80"],
+  aurora:["Аврора","#7df9ff","#000","#0b1026","#5b2a86","#1fa2a6"],
+  sunset:["Закат","#ffd27d","#000","#1a0b1e","#ff5e62","#ff9966"],
+  ocean:["Океан","#00ffca","#000","#021b2b","#0a4d68","#05bfdb"]};
+let theme="mono",tab=0,timer=null;
+const tabs=[["⌶","Текст"],["◔","Скорость"],["⌨","Печать"],["◐","Стиль"],["?","Помощь"]];
+const sl=(t,v,p)=>`<div class="row"><span>${t}</span><span class="val">${v}</span></div><div class="slider" style="--p:${p}%"></div>`;
+const tg=(t,s,on=1)=>`<div class="row"><span>${t}${s?`<small>${s}</small>`:""}</span><i class="tog${on?"":" off"}"></i></div>`;
+const kbRows=["йцукенгшщзх","фывапролджэ","ячсмитьбю"];
+const kb=()=>`<div class="kb">${kbRows.map((r,i)=>`<div>${i==2?'<span class="s">⇧</span>':""}${[...r].map(c=>`<span data-k="${c}">${c}</span>`).join("")}${i==2?'<span class="s" data-k="del">⌫</span>':""}</div>`).join("")}<div><span class="s">123</span><span class="s">🌐</span><span class="w" data-k=" ">Пробел</span><span class="s">Ввод</span></div></div>`;
+const screens=[
+()=>`<div class="card"><div class="row" style="justify-content:flex-start;gap:16px"><div class="ring">42%</div><span><b style="font-size:19px">Печатает</b><small>231 из 548 символов</small></span></div></div>
+<div class="card"><h3><i>▤</i>Текст</h3><div class="editor">Привет! Сегодня получилось закончить всё раньше, так что вечером я свободен. Напиши, во сколько тебе удобно встретиться.</div><p class="hint">548 симв. · 84 слова · ≈ 47 с</p><div class="btns"><div class="btn">Вставить</div><div class="btn">Очистить</div></div></div>
+<div class="card"><h3><i>◷</i>Запуск</h3>${sl("Таймер до старта","4 с",13)}<div class="btns"><div class="btn pri">❚❚ Пауза</div><div class="btn">■ Стоп</div></div><p class="hint">Нажмите старт, перейдите в нужное приложение и коснитесь поля ввода — печать начнётся по таймеру.</p></div>`,
+()=>`<div class="card"><h3><i>◔</i>Скорость</h3><div class="seg"><b>Ровный</b><b class="on">Плавающий</b></div>${sl("От","125 впм",37)}${sl("До","132 впм",40)}<p class="hint">Любое число можно ввести вручную. Темп плавно гуляет между значениями.</p></div>
+<div class="card"><h3><i>∿</i>Ритм</h3>${tg("Микропаузы","После слов, знаков препинания и редкие заминки")}${sl("Сила пауз","1.0",45)}${tg("Учитывать удобство клавиш","Удобные слова — быстрее, неудобные сочетания — медленнее")}</div>
+<div class="card"><h3><i>▶</i>Проба</h3><div class="typed" id="typed"></div>${kb()}</div>`,
+()=>`<div class="card"><h3><i>⌶</i>Опечатки</h3>${tg("Имитация ошибок","Ошибается, замечает, стирает и печатает заново")}${sl("Доля ошибок","3.0 %",20)}<p class="hint">Процент вводится вручную — любой. Соседняя клавиша, перепутанные буквы, двойное нажатие, пропуск.</p></div>
+<div class="card"><h3><i>⌨</i>Клавиатура</h3><div class="seg"><b class="on">iOS</b><b>Тёмная</b><b>Светлая</b><b>Material</b></div>${tg("Показывать нажатия","Клавиши подсвечиваются, как от пальца")}${tg("Пауза при касании","Любое касание ставит печать на паузу")}${tg("Звук клавиш","",0)}${tg("Вибрация","Нужен «Полный доступ»",0)}</div>
+<div class="card"><h3><i>↵</i>Перенос строки</h3><div class="seg"><b class="on">Ввод</b><b>Пробел</b><b>Пропуск</b></div></div>`,
+()=>`<div class="card"><h3><i>✦</i>Темы</h3><div class="sw">${Object.entries(themes).map(([k,t])=>`<div class="${k==theme?"on":""}"><i style="background:linear-gradient(135deg,${t[3]},${t[4]},${t[5]})"></i>${t[0]}</div>`).join("")}</div></div>
+<div class="card"><h3><i>◐</i>Палитра</h3>${[["Акцент",1],["Фон — основа",3],["Фон — перелив 1",4],["Фон — перелив 2",5]].map(([n,i])=>`<div class="row"><span>${n}</span><i class="dot" style="background:${themes[theme][i]}"></i></div>`).join("")}${tg("Анимация фона","")}</div>
+<div class="card"><h3><i>▣</i>Свой фон</h3><div class="btns"><div class="btn pri">Выбрать фото</div></div>${sl("Размытие","12",30)}${sl("Затемнение","0.35",44)}</div>
+<div class="card"><h3><i>A</i>Шрифты</h3><div class="row"><span>Основной (Samsung)</span><span class="val">SamsungOne ⌃</span></div><div class="row"><span>Жирный (Samsung Bold)</span><span class="val">Samsung Bold ⌃</span></div><div class="btns"><div class="btn">＋ Добавить шрифт</div></div></div>`,
+()=>`<div class="card"><h3><i>⚙</i>Установка клавиатуры</h3><div class="step"><b>1</b>Настройки → Основные → Клавиатура → Клавиатуры → Новые клавиатуры → AutoTyper.</div><div class="step"><b>2</b>Включите «Полный доступ» — нужен для буфера обмена и вибрации.</div><div class="step"><b>3</b>В любом поле ввода удерживайте 🌐 и выберите AutoTyper.</div><div class="btns"><div class="btn pri">Открыть настройки</div></div></div>
+<div class="card"><h3><i>☝</i>Скрытое управление</h3><div class="step"><b>•</b>Удерживать пробел — старт, пауза или продолжение.</div><div class="step"><b>•</b>Любое касание клавиатуры во время печати — пауза.</div><div class="step"><b>•</b>Удерживать «123» — скрытая панель управления.</div></div>`];
+
+function applyTheme(){const t=themes[theme],s=document.documentElement.style;
+  s.setProperty("--accent",t[1]);s.setProperty("--on-accent",t[2]);s.setProperty("--bg0",t[3]);s.setProperty("--bg1",t[4]);s.setProperty("--bg2",t[5]);
+  document.getElementById("themes").innerHTML=Object.entries(themes).map(([k,v])=>`<button id="th-${k}" data-t="${k}" aria-pressed="${k==theme}">${v[0]}</button>`).join("")}
+function render(){clearTimeout(timer);
+  document.getElementById("screen").innerHTML=`<div class="head"><span class="logo">AutoTyper</span><span>${tabs[tab][1]}</span></div>`+screens[tab]();
+  document.getElementById("screen").scrollTop=0;
+  document.getElementById("tabs").innerHTML=tabs.map((t,i)=>`<button class="tab" id="tab-${i}" role="tab" data-i="${i}" aria-selected="${i==tab}"><i>${t[0]}</i>${t[1]}</button>`).join("");
+  if(tab==1)demo()}
+function demo(){const el=document.getElementById("typed");if(!el)return;
+  // «<» is a backspace: the script contains typos that get corrected.
+  const script="привет, это проверка печати: удобнеы<<ые слова набираются быстрее, а неудобные чутб<ь медленнее. ";let i=0;
+  (function next(){if(!el.isConnected)return;if(i>=script.length){i=0;el.textContent=""}
+    const c=script[i++],del=c=="<";
+    el.textContent=del?el.textContent.slice(0,-1):el.textContent+c;
+    const k=document.querySelector(`.kb [data-k="${del?"del":c}"]`);
+    if(k){k.classList.add("hit");setTimeout(()=>k.classList.remove("hit"),90)}
+    const nx=script[i];let d=70+Math.random()*70;
+    if(c==" ")d+=Math.random()<.15?260:20;if(",.:".includes(c))d+=220;if(nx=="<"&&!del)d+=320;if(del)d=120;
+    timer=setTimeout(next,d)})()}
+document.getElementById("themes").onclick=e=>{const b=e.target.closest("button");if(b){theme=b.dataset.t;applyTheme();if(tab==3)render()}};
+document.getElementById("tabs").onclick=e=>{const b=e.target.closest("button");if(b){tab=+b.dataset.i;render()}};
+applyTheme();render();
+</script>
