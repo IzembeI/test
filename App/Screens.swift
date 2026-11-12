@@ -22,6 +22,7 @@ struct ContentView: View {
     @State private var tab = 0
     @State private var page: String?            // settings sub-page
     @Namespace private var ns
+    @State private var keyboardShown = false
 
     private let tabs: [(icon: String, name: String)] = [
         ("character.cursor.ibeam", "Печать"), ("slider.horizontal.3", "Параметры"), ("gearshape", "Настройки")
@@ -52,6 +53,33 @@ struct ContentView: View {
                 tabBar
             }
             .ignoresSafeArea(.keyboard)
+            if keyboardShown {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button {
+                            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                        } label: {
+                            Image(systemName: "keyboard.chevron.compact.down")
+                                .font(.system(size: 17, weight: .medium))
+                                .frame(width: 48, height: 40)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .glass(radius: 14, padding: 0)
+                        .padding(.trailing, 14)
+                        .padding(.bottom, 8)
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            withAnimation(.easeOut(duration: 0.2)) { keyboardShown = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            withAnimation(.easeOut(duration: 0.2)) { keyboardShown = false }
         }
         .foregroundColor(m.textColor)
         .tint(m.accent)
@@ -111,6 +139,7 @@ struct ScreenTitle: View {
 struct PrintTab: View {
     @EnvironmentObject var m: AppModel
     @State private var importing = false
+    @State private var copied = false
 
     private var total: Int { max(m.status.total, m.text.count) }
     private var progress: Double { total > 0 ? min(1, Double(m.status.pos) / Double(total)) : 0 }
@@ -188,6 +217,16 @@ struct PrintTab: View {
                     if let s = UIPasteboard.general.string { m.text = s }
                 } label: { Label("Вставить", systemImage: "doc.on.clipboard") }
                     .buttonStyle(GlassButton())
+                Button {
+                    UIPasteboard.general.string = m.text
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                } label: { Label(copied ? "Скопировано" : "Копировать", systemImage: copied ? "checkmark" : "doc.on.doc") }
+                    .buttonStyle(GlassButton())
+                    .disabled(m.text.isEmpty)
+            }
+            .lineLimit(1)
+            HStack(spacing: 8) {
                 Button { importing = true } label: { Label("Файл", systemImage: "doc") }
                     .buttonStyle(GlassButton())
                 Button { m.text = "" } label: { Label("Очистить", systemImage: "trash") }
@@ -423,7 +462,7 @@ struct SettingsTab: View {
     @EnvironmentObject var m: AppModel
     @Binding var page: String?
 
-    private let skins = ["iOS", "Тёмная", "Светлая", "Material"]
+    private let skins = ["iOS", "Тёмная", "Светлая", "Material", "Старая iOS"]
 
     private func go(_ p: String?) {
         withAnimation(.easeInOut(duration: 0.25)) { page = p }
@@ -472,7 +511,7 @@ struct SettingsTab: View {
                 RowLine()
                 nav("textformat", "Шрифты", m.theme.fontRegular.isEmpty ? "Системный" : m.theme.fontRegular, "fonts")
                 RowLine()
-                nav("keyboard", "Клавиатура", skins[min(max(m.settings.skin, 0), 3)], "keyboard")
+                nav("keyboard", "Клавиатура", skins[min(max(m.settings.skin, 0), 4)], "keyboard")
                 RowLine()
                 nav("chart.bar", "Статистика", "", "stats")
                 RowLine()
@@ -671,7 +710,7 @@ struct KeyboardPage: View {
         ScreenTitle("Клавиатура")
         VStack(spacing: 10) {
             SectionLabel("Вид")
-            Segments(items: ["iOS", "Тёмная", "Светлая", "Material"], selection: $m.settings.skin)
+            Segments(items: ["iOS", "Тёмная", "Светлая", "Material", "Старая"], selection: $m.settings.skin)
             ToggleRow(title: "Показывать нажатия", subtitle: "Клавиши подсвечиваются, как от пальца",
                       isOn: $m.settings.showTaps)
             RowLine()

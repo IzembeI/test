@@ -78,6 +78,8 @@ final class AppModel: ObservableObject {
     @Published var stats: [RunStat] = []
 
     private var timer: Timer?
+    private let server = LinkServer()
+    private var background = UIBackgroundTaskIdentifier.invalid
 
     init() {
         let st = Store.shared
@@ -87,6 +89,26 @@ final class AppModel: ObservableObject {
         status = st.status
         bgImage = UIImage(contentsOfFile: st.url("bg.jpg").path)
         reloadFonts()
+        if !st.isShared {
+            // Without a shared container the keyboard fetches everything from the app directly.
+            server.start()
+            let nc = NotificationCenter.default
+            nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+                guard let s = self, s.background == .invalid else { return }
+                s.background = UIApplication.shared.beginBackgroundTask {
+                    UIApplication.shared.endBackgroundTask(s.background)
+                    s.background = .invalid
+                }
+            }
+            nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+                guard let s = self else { return }
+                s.server.start()
+                if s.background != .invalid {
+                    UIApplication.shared.endBackgroundTask(s.background)
+                    s.background = .invalid
+                }
+            }
+        }
         library = st.load([SavedText].self, "library.json") ?? []
         profiles = st.load([TypingProfile].self, "profiles.json") ?? AppModel.defaultProfiles
         timer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in

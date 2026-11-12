@@ -22,6 +22,8 @@ final class KeyboardViewController: UIInputViewController {
     private var heightConstraint: NSLayoutConstraint?
     private var panelVisible = false
     private var skinKey = -1
+    private let link = LinkClient()
+    private var ticks = 0
     private var run: RunStat?
     private var runStart = 0
     private let haptic = UIImpactFeedbackGenerator(style: .light)
@@ -199,6 +201,19 @@ final class KeyboardViewController: UIInputViewController {
     // MARK: Commands from the app
 
     private func tick() {
+        ticks += 1
+        if !store.isShared && hasFullAccess && ticks % 4 == 1 {
+            link.sync(LinkReport(status: status, stats: store.stats)) { [weak self] p in
+                guard let self = self else { return }
+                self.store.settings = p.settings
+                if p.text != self.store.text { self.store.text = p.text }
+                if let c = p.command { self.store.command = c }
+                self.settings = p.settings
+                self.engine?.settings = p.settings
+                self.applySkin()
+                self.refreshPanel()
+            }
+        }
         if let cmd = store.command, cmd.id != status.lastCmd {
             status.lastCmd = cmd.id
             if Date().timeIntervalSince1970 - cmd.created < 900 {

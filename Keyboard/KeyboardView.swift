@@ -19,6 +19,7 @@ struct Skin {
     var shadow: UIColor
     var backdrop: UIColor
     var radius: CGFloat
+    var modern = false       // current iOS look: rounder flat keys, icon on return
 
     static func make(_ id: Int, systemDark: Bool) -> Skin {
         let dark = id == 1 || (id != 2 && systemDark)
@@ -31,6 +32,15 @@ struct Skin {
                 : Skin(key: .white, special: UIColor(red: 0.84, green: 0.86, blue: 0.88, alpha: 1), text: .black,
                        pressed: UIColor(white: 0.82, alpha: 1), popup: .white,
                        shadow: .clear, backdrop: UIColor(red: 0.93, green: 0.94, blue: 0.95, alpha: 1), radius: 7)
+        }
+        if id != 4 {
+            return dark
+                ? Skin(key: UIColor(white: 1, alpha: 0.20), special: UIColor(white: 1, alpha: 0.09), text: .white,
+                       pressed: UIColor(white: 1, alpha: 0.40), popup: UIColor(white: 0.40, alpha: 1),
+                       shadow: .clear, backdrop: touchable, radius: 9, modern: true)
+                : Skin(key: .white, special: UIColor(red: 0.62, green: 0.65, blue: 0.70, alpha: 0.45), text: .black,
+                       pressed: UIColor(white: 0.80, alpha: 1), popup: .white,
+                       shadow: UIColor(white: 0, alpha: 0.16), backdrop: touchable, radius: 9, modern: true)
         }
         return dark
             ? Skin(key: UIColor(white: 0.42, alpha: 1), special: UIColor(white: 0.27, alpha: 1), text: .white,
@@ -75,7 +85,9 @@ private final class KeyCap: UIView {
                 label.font = .systemFont(ofSize: 16)
             } else {
                 let lower = spec.label.lowercased() == spec.label && spec.label.uppercased() != spec.label
-                label.font = .systemFont(ofSize: lower ? 24 : 22.5, weight: .light)
+                label.font = skin.modern
+                    ? .systemFont(ofSize: lower ? 25 : 23, weight: .regular)
+                    : .systemFont(ofSize: lower ? 24 : 22.5, weight: .light)
             }
         }
         setPressed(false)
@@ -212,8 +224,10 @@ final class KeyboardView: UIView {
         let abc = lang == .ru ? "АБВ" : "ABC"
         out.append(KeySpec(id: "mode", label: page == .letters ? "123" : abc, icon: nil, x: 0, w: 0.125, row: 3, special: true))
         out.append(KeySpec(id: "globe", label: "", icon: "globe", x: 0.125, w: 0.125, row: 3, special: true))
-        out.append(KeySpec(id: "space", label: lang == .ru ? "Пробел" : "space", icon: nil, x: 0.25, w: 0.5, row: 3, special: false))
-        out.append(KeySpec(id: "return", label: lang == .ru ? "Ввод" : "return", icon: nil, x: 0.75, w: 0.25, row: 3, special: true))
+        let spaceLabel = skin.modern ? "" : (lang == .ru ? "Пробел" : "space")
+        out.append(KeySpec(id: "space", label: spaceLabel, icon: nil, x: 0.25, w: 0.5, row: 3, special: false))
+        out.append(KeySpec(id: "return", label: lang == .ru ? "Ввод" : "return", icon: skin.modern ? "return" : nil,
+                           x: 0.75, w: 0.25, row: 3, special: true))
         return out
     }
 

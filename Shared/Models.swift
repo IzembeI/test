@@ -20,7 +20,7 @@ struct TyperSettings: Codable, Equatable {
     var clickSound = false
     var haptics = false
     var pauseOnTouch = true
-    var skin = 0                 // 0 iOS авто, 1 iOS тёмная, 2 iOS светлая, 3 Material
+    var skin = 0                 // 0 iOS авто, 1 iOS тёмная, 2 iOS светлая, 3 Material, 4 классическая iOS
     var warmup = true            // разгон в начале и усталость на длинном тексте
     var autocorrect = true       // часть опечаток исправляется «автозаменой» целого слова
     var startHaptic = true       // вибрация в момент старта печати
@@ -141,7 +141,8 @@ final class Store {
     }
 
     /// True when the other side is reachable: shared container, or data arriving over the bridge.
-    var linked: Bool { isShared || (inBoard?.numberOfItems ?? 0) > 0 }
+    static var linkSeen = false
+    var linked: Bool { isShared || Store.linkSeen || (inBoard?.numberOfItems ?? 0) > 0 }
 
     func readData(_ name: String) -> Data? {
         if !isShared, theirs.contains(name), let pb = inBoard {

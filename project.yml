@@ -60,5 +60,7 @@ targets:
             PrefersRightToLeft: false
             PrimaryLanguage: ru
             RequestsOpenAccess: true
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
           NSExtensionPointIdentifier: com.apple.keyboard-service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
