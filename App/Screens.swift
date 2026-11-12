@@ -212,7 +212,7 @@ struct TextTab: View {
     private var launchCard: some View {
         VStack(spacing: 14) {
             SectionTitle(icon: "timer", title: "Запуск")
-            SliderRow(title: "Таймер до старта", value: $m.settings.startDelay, range: 0...30, unit: "с")
+            SliderRow(title: "Таймер до старта", value: $m.settings.startDelay, range: 0...30, unit: "с", free: true)
             let state = m.status.state
             if m.waitingForKeyboard {
                 Button {
@@ -276,10 +276,10 @@ struct SpeedTab: View {
                 SectionTitle(icon: "speedometer", title: "Скорость")
                 Segments(items: ["Ровный", "Плавающий"], selection: $m.settings.wpmMode)
                 if m.settings.wpmMode == 0 {
-                    SliderRow(title: "Скорость", value: $m.settings.wpm, range: 20...300, unit: "впм")
+                    SliderRow(title: "Скорость", value: $m.settings.wpm, range: 20...300, unit: "впм", free: true)
                 } else {
-                    SliderRow(title: "От", value: $m.settings.wpmMin, range: 20...300, unit: "впм")
-                    SliderRow(title: "До", value: $m.settings.wpmMax, range: 20...300, unit: "впм")
+                    SliderRow(title: "От", value: $m.settings.wpmMin, range: 20...300, unit: "впм", free: true)
+                    SliderRow(title: "До", value: $m.settings.wpmMax, range: 20...300, unit: "впм", free: true)
                     Text("Темп плавно гуляет между значениями: то разгоняется, то сбавляет.")
                         .font(m.font(12)).opacity(0.6)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -287,8 +287,6 @@ struct SpeedTab: View {
             }
             .glass()
             .appear(0)
-            .onChange(of: m.settings.wpmMin) { v in if v > m.settings.wpmMax { m.settings.wpmMax = v } }
-            .onChange(of: m.settings.wpmMax) { v in if v < m.settings.wpmMin { m.settings.wpmMin = v } }
 
             VStack(spacing: 14) {
                 SectionTitle(icon: "waveform.path", title: "Ритм")
@@ -350,7 +348,7 @@ struct TypingTab: View {
                           subtitle: "Ошибается, замечает, стирает и печатает заново",
                           isOn: $m.settings.errorsEnabled)
                 if m.settings.errorsEnabled {
-                    SliderRow(title: "Доля ошибок", value: $m.settings.errorRate, range: 0...15, step: 0.5, unit: "%", decimals: 1)
+                    SliderRow(title: "Доля ошибок", value: $m.settings.errorRate, range: 0...15, step: 0.5, unit: "%", decimals: 1, free: true)
                     Text("Соседняя клавиша, перепутанные буквы, двойное нажатие, пропуск. Иногда замечает сразу, иногда через пару букв.")
                         .font(m.font(12)).opacity(0.6)
                         .frame(maxWidth: .infinity, alignment: .leading)

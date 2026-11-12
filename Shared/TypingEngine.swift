@@ -146,7 +146,7 @@ final class TypingEngine {
         self.settings = settings
         self.lang = lang
         let w = settings.wpmMode == 0 ? settings.wpm : (settings.wpmMin + settings.wpmMax) / 2
-        wpmCur = max(5, w)
+        wpmCur = max(1, w)
         wpmGoal = wpmCur
     }
 
@@ -171,10 +171,10 @@ final class TypingEngine {
 
     private func updateDrift() {
         if settings.wpmMode == 0 {
-            wpmCur = max(5, settings.wpm)
+            wpmCur = max(1, settings.wpm)
             return
         }
-        let lo = max(5, min(settings.wpmMin, settings.wpmMax))
+        let lo = max(1, min(settings.wpmMin, settings.wpmMax))
         let hi = max(lo, max(settings.wpmMin, settings.wpmMax))
         if driftLeft <= 0 {
             wpmGoal = uni(lo, hi)
@@ -226,7 +226,7 @@ final class TypingEngine {
         let d = base * f * exp(gauss() * 0.16) * control + extra + pendingPause
         pendingPause = 0
         if let p = p { lastPos = p }
-        return max(0.018, d)
+        return max(0.004, d)
     }
 
     private var modeDelay: Double { base * uni(1.0, 1.6) + 0.04 }
@@ -395,7 +395,7 @@ final class TypingEngine {
     /// leaves the cursor so that normal typing continues from the right place.
     private func tryError() -> Bool {
         guard settings.errorsEnabled, settings.errorRate > 0, i >= noErrUntil,
-              rnd() < settings.errorRate / 100 else { return false }
+              rnd() < min(1, settings.errorRate / 100) else { return false }
         let n = chars.count
         func plain(_ ch: Character) -> Bool {
             guard !ch.isUppercase, let l = KeyGeo.locate(ch, lang: lang) else { return false }

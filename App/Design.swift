@@ -186,18 +186,43 @@ struct SliderRow: View {
     var step: Double = 1
     var unit = ""
     var decimals = 0
+    var free = false            // any value can be typed in, the slider is only a shortcut
+
+    @State private var input = ""
+    @FocusState private var focused: Bool
+
+    private var formatted: String { String(format: "%.\(decimals)f", value) }
 
     var body: some View {
         VStack(spacing: 6) {
-            HStack {
+            HStack(spacing: 4) {
                 Text(title).font(m.font(15))
                 Spacer()
-                Text(String(format: "%.\(decimals)f", value) + (unit.isEmpty ? "" : " " + unit))
+                TextField("", text: $input)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .focused($focused)
+                    .frame(width: 76)
+                    .padding(.vertical, 3)
+                    .padding(.horizontal, 6)
+                    .background(.white.opacity(focused ? 0.16 : 0.07), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .font(m.font(15, bold: true))
                     .foregroundColor(m.accent)
                     .monospacedDigit()
+                if !unit.isEmpty {
+                    Text(unit).font(m.font(15, bold: true)).foregroundColor(m.accent)
+                }
             }
-            Slider(value: $value, in: range, step: step)
+            Slider(value: Binding(get: { min(max(value, range.lowerBound), range.upperBound) },
+                                  set: { value = $0 }),
+                   in: range, step: step)
+        }
+        .onAppear { input = formatted }
+        .onChange(of: value) { _ in if !focused { input = formatted } }
+        .onChange(of: focused) { f in if !f { input = formatted } }
+        .onChange(of: input) { t in
+            guard focused, let v = Double(t.replacingOccurrences(of: ",", with: ".")), v >= 0 else { return }
+            value = free ? v : min(max(v, range.lowerBound), range.upperBound)
         }
     }
 }

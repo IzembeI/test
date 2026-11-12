@@ -183,10 +183,10 @@ final class KeyboardViewController: UIInputViewController {
 
     private func bump(_ d: Double) {
         if settings.wpmMode == 0 {
-            settings.wpm = max(10, min(400, settings.wpm + d))
+            settings.wpm = max(1, min(100000, settings.wpm + d))
         } else {
-            settings.wpmMin = max(10, min(400, settings.wpmMin + d))
-            settings.wpmMax = max(10, min(400, settings.wpmMax + d))
+            settings.wpmMin = max(1, min(100000, settings.wpmMin + d))
+            settings.wpmMax = max(1, min(100000, settings.wpmMax + d))
         }
         store.settings = settings
         engine?.settings = settings
