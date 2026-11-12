@@ -73,6 +73,9 @@ final class AppModel: ObservableObject {
     @Published var lastCommand: TyperCommand?
     @Published var bgImage: UIImage?
     @Published var fonts: [FontInfo] = []
+    @Published var library: [SavedText] = [] { didSet { if library != oldValue { store.save(library, "library.json") } } }
+    @Published var profiles: [TypingProfile] = [] { didSet { if profiles != oldValue { store.save(profiles, "profiles.json") } } }
+    @Published var stats: [RunStat] = []
 
     private var timer: Timer?
 
@@ -80,15 +83,79 @@ final class AppModel: ObservableObject {
         let st = Store.shared
         settings = st.settings
         text = st.text
-        theme = st.load(Theme.self, "theme.json") ?? Theme()
+        theme = st.loadMerged(Theme(), "theme.json")
         status = st.status
         bgImage = UIImage(contentsOfFile: st.url("bg.jpg").path)
         reloadFonts()
+        library = st.load([SavedText].self, "library.json") ?? []
+        profiles = st.load([TypingProfile].self, "profiles.json") ?? AppModel.defaultProfiles
         timer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
             guard let s = self else { return }
             let st = s.store.status
             if st != s.status { s.status = st }
         }
+    }
+
+    // MARK: Library, profiles, statistics
+
+    static var defaultProfiles: [TypingProfile] {
+        var fast = TyperSettings(); fast.wpm = 160; fast.errorRate = 2
+        var neat = TyperSettings(); neat.wpm = 110; neat.errorsEnabled = false
+        var loose = TyperSettings(); loose.wpmMode = 1; loose.wpmMin = 120; loose.wpmMax = 140; loose.errorRate = 6
+        return [TypingProfile(name: "Быстрый", settings: fast),
+                TypingProfile(name: "Аккуратный", settings: neat),
+                TypingProfile(name: "Небрежный", settings: loose)]
+    }
+
+    func saveCurrentText() {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, !library.contains(where: { $0.text == text }) else { return }
+        let line = t.split(whereSeparator: { $0.isNewline }).first.map(String.init) ?? t
+        library.insert(SavedText(title: String(line.prefix(40)), text: text), at: 0)
+    }
+
+    func importText(_ url: URL) {
+        let ok = url.startAccessingSecurityScopedResource()
+        defer { if ok { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url) else { return }
+        if let s = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .windowsCP1251) {
+            text = s
+        }
+    }
+
+    func saveProfile(named name: String) {
+        let n = name.trimmingCharacters(in: .whitespaces)
+        guard !n.isEmpty else { return }
+        if let i = profiles.firstIndex(where: { $0.name == n }) {
+            profiles[i].settings = settings
+        } else {
+            profiles.append(TypingProfile(name: n, settings: settings))
+        }
+    }
+
+    /// A profile carries the typing style only; keyboard and launch options stay as they are.
+    func apply(_ p: TypingProfile) {
+        var s = settings
+        let v = p.settings
+        s.wpmMode = v.wpmMode; s.wpm = v.wpm; s.wpmMin = v.wpmMin; s.wpmMax = v.wpmMax
+        s.errorsEnabled = v.errorsEnabled; s.errorRate = v.errorRate; s.autocorrect = v.autocorrect
+        s.micropauses = v.micropauses; s.pauseStrength = v.pauseStrength
+        s.ergonomics = v.ergonomics; s.warmup = v.warmup
+        settings = s
+    }
+
+    private func style(_ v: TyperSettings) -> [Double] {
+        [Double(v.wpmMode), v.wpm, v.wpmMin, v.wpmMax, v.errorsEnabled ? 1 : 0, v.errorRate, v.autocorrect ? 1 : 0,
+         v.micropauses ? 1 : 0, v.pauseStrength, v.ergonomics ? 1 : 0, v.warmup ? 1 : 0]
+    }
+
+    func matches(_ p: TypingProfile) -> Bool { style(p.settings) == style(settings) }
+
+    func loadStats() { stats = store.stats.reversed() }
+
+    func clearStats() {
+        store.stats = []
+        stats = []
     }
 
     // MARK: Commands
@@ -242,6 +309,9 @@ final class DemoRunner: ObservableObject {
             case .dotShortcut:
                 if !self.output.isEmpty { self.output.removeLast() }
                 self.output += ". "
+            case .replace(let n, let t):
+                self.output.removeLast(min(n, self.output.count))
+                self.output += t
             case .none: break
             }
             let dt = Date().timeIntervalSince(self.started)

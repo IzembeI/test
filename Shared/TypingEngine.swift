@@ -106,7 +106,7 @@ enum KeyGeo {
 // MARK: - Steps
 
 struct TypeStep {
-    enum Action { case insert(String), backspace, dotShortcut, none }
+    enum Action { case insert(String), backspace, dotShortcut, replace(Int, String), none }
     var delay: Double
     var action: Action
     var hl: String?          // key to highlight: a character, or space/return/shift/delete/mode/alt/globe
@@ -137,12 +137,15 @@ final class TypingEngine {
     private var pendingPause = 0.0
     private var noErrUntil = 0
     private var wordFactor = 1.0
+    private let startIndex: Int
+    private(set) var typoCount = 0
 
     var total: Int { chars.count }
 
     init(text: String, start: Int, settings: TyperSettings, lang: KBLang) {
         chars = Array(text)
         i = max(0, min(start, chars.count))
+        startIndex = i
         self.settings = settings
         self.lang = lang
         let w = settings.wpmMode == 0 ? settings.wpm : (settings.wpmMin + settings.wpmMax) / 2
@@ -185,7 +188,16 @@ final class TypingEngine {
         wpmCur = min(hi, max(lo, wpmCur))
     }
 
-    private var base: Double { 12.0 / wpmCur }      // 1 word = 5 characters
+    private var base: Double { 12.0 / (wpmCur * paceK) }      // 1 word = 5 characters
+
+    /// Warm-up at the start of a run and slight fatigue on long texts.
+    private var paceK: Double {
+        guard settings.warmup else { return 1 }
+        let n = Double(i - startIndex)
+        let warm = n < 30 ? 0.82 + 0.18 * n / 30 : 1
+        let tired = n > 400 ? max(0.92, 1 - (n - 400) / 1600 * 0.08) : 1
+        return warm * tired
+    }
     private var pauseK: Double { settings.micropauses ? settings.pauseStrength : 0 }
 
     private func commit(_ n: Int) {
@@ -391,6 +403,37 @@ final class TypingEngine {
 
     // MARK: Typos
 
+    /// Keeps typing the word with the wrong letter in it; the space then swaps the whole
+    /// word for the right one, the way iOS autocorrection does.
+    private func autocorrected(wrong: Character) -> Bool {
+        let n = chars.count
+        func plain(_ ch: Character) -> Bool {
+            guard !ch.isUppercase, let l = KeyGeo.locate(ch, lang: lang) else { return false }
+            return l.page == .letters && l.lang == lang && !l.long
+        }
+        var start = i
+        while start > 0, isLetter(chars[start - 1]) { start -= 1 }
+        var end = i + 1
+        while end < n, plain(chars[end]) { end += 1 }
+        guard end < n, chars[end] == " ", end - start >= 4 else { return false }
+        shiftDisp = 0
+        push(.insert(String(wrong)), hl: String(wrong), delay: keyDelay(to: KeyGeo.positions[wrong]))
+        for j in (i + 1)..<end {
+            let ch = chars[j]
+            push(.insert(String(ch)), hl: String(ch), delay: keyDelay(to: KeyGeo.positions[ch]))
+        }
+        let d = keyDelay(to: KeyGeo.spacePos)
+        let consumed = end + 1 - i
+        i = end + 1
+        commit(consumed)
+        refreshShift(at: i)
+        push(.replace(end - start, String(chars[start..<end]) + " "), hl: "space", delay: d)
+        typoCount += 1
+        noErrUntil = i + 2
+        afterPause(" ")
+        return true
+    }
+
     /// Types a mistake, notices it (sometimes a few characters later), deletes back and
     /// leaves the cursor so that normal typing continues from the right place.
     private func tryError() -> Bool {
@@ -417,7 +460,9 @@ final class TypingEngine {
         } else {
             guard let w = KeyGeo.neighbors(c).randomElement() else { return false }
             typed = [w]                                     // neighbouring key
+            if settings.autocorrect, rnd() < 0.45, autocorrected(wrong: w) { return true }
         }
+        typoCount += 1
 
         let kr = rnd()
         var k = kr < 0.45 ? 0 : (kr < 0.72 ? 1 : (kr < 0.90 ? 2 : 3))

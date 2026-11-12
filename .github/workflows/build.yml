@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Generate project
@@ -31,9 +31,9 @@ jobs:
           codesign -f -s - --entitlements App/App.entitlements "$APP"
           mkdir Payload
           cp -R "$APP" Payload/
-          zip -qry AutoTyper.ipa Payload
-          ls -lh AutoTyper.ipa
+          zip -qry Mercury.ipa Payload
+          ls -lh Mercury.ipa
       - uses: actions/upload-artifact@v4
         with:
-          name: AutoTyper-ipa
-          path: AutoTyper.ipa
+          name: Mercury-ipa
+          path: Mercury.ipa

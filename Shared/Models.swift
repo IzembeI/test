@@ -20,6 +20,31 @@ struct TyperSettings: Codable, Equatable {
     var haptics = false
     var pauseOnTouch = true
     var skin = 0                 // 0 iOS авто, 1 iOS тёмная, 2 iOS светлая, 3 Material
+    var warmup = true            // разгон в начале и усталость на длинном тексте
+    var autocorrect = true       // часть опечаток исправляется «автозаменой» целого слова
+    var startHaptic = true       // вибрация в момент старта печати
+}
+
+struct SavedText: Codable, Identifiable, Equatable {
+    var id = UUID().uuidString
+    var title = ""
+    var text = ""
+}
+
+struct TypingProfile: Codable, Identifiable, Equatable {
+    var id = UUID().uuidString
+    var name = ""
+    var settings = TyperSettings()
+}
+
+struct RunStat: Codable, Identifiable, Equatable {
+    var id = UUID().uuidString
+    var date = Date().timeIntervalSince1970
+    var chars = 0
+    var seconds = 0.0
+    var typos = 0
+
+    var wpm: Double { seconds > 0 ? Double(chars) / 5 / (seconds / 60) : 0 }
 }
 
 struct TyperCommand: Codable {
@@ -97,13 +122,25 @@ final class Store {
         return try? JSONDecoder().decode(type, from: d)
     }
 
+    /// Decodes a file saved by an older version: missing keys take their default values.
+    func loadMerged<T: Codable>(_ defaults: T, _ name: String) -> T {
+        guard let file = try? Data(contentsOf: url(name)),
+              let saved = (try? JSONSerialization.jsonObject(with: file)) as? [String: Any],
+              let base = try? JSONEncoder().encode(defaults),
+              var dict = (try? JSONSerialization.jsonObject(with: base)) as? [String: Any] else { return defaults }
+        for (k, v) in saved { dict[k] = v }
+        guard let merged = try? JSONSerialization.data(withJSONObject: dict),
+              let value = try? JSONDecoder().decode(T.self, from: merged) else { return defaults }
+        return value
+    }
+
     func save<T: Encodable>(_ value: T, _ name: String) {
         guard let d = try? JSONEncoder().encode(value) else { return }
         try? d.write(to: url(name), options: .atomic)
     }
 
     var settings: TyperSettings {
-        get { load(TyperSettings.self, "settings.json") ?? TyperSettings() }
+        get { loadMerged(TyperSettings(), "settings.json") }
         set { save(newValue, "settings.json") }
     }
 
@@ -115,6 +152,18 @@ final class Store {
     var status: TyperStatus {
         get { load(TyperStatus.self, "status.json") ?? TyperStatus() }
         set { save(newValue, "status.json") }
+    }
+
+    var stats: [RunStat] {
+        get { load([RunStat].self, "stats.json") ?? [] }
+        set { save(Array(newValue.suffix(60)), "stats.json") }
+    }
+
+    func record(_ run: RunStat) {
+        guard run.chars > 0 else { return }
+        var list = stats
+        if let i = list.firstIndex(where: { $0.id == run.id }) { list[i] = run } else { list.append(run) }
+        stats = list
     }
 
     var command: TyperCommand? {

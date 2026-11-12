@@ -30,7 +30,7 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: AutoTyper
+        CFBundleDisplayName: Mercury
         UILaunchScreen: {}
         LSRequiresIPhoneOS: true
         UISupportedInterfaceOrientations:
@@ -53,7 +53,7 @@ targets:
     info:
       path: Keyboard/Info.plist
       properties:
-        CFBundleDisplayName: AutoTyper
+        CFBundleDisplayName: Mercury
         NSExtension:
           NSExtensionAttributes:
             IsASCIICapable: false

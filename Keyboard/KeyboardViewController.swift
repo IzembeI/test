@@ -22,6 +22,8 @@ final class KeyboardViewController: UIInputViewController {
     private var heightConstraint: NSLayoutConstraint?
     private var panelVisible = false
     private var skinKey = -1
+    private var run: RunStat?
+    private var runStart = 0
     private let haptic = UIImpactFeedbackGenerator(style: .light)
 
     // MARK: Lifecycle
@@ -228,6 +230,8 @@ final class KeyboardViewController: UIInputViewController {
     private func start(at fireAt: Double, reset: Bool) {
         work?.cancel()
         if reset {
+            saveRun()
+            run = nil
             engine = nil
             pendingStep = nil
             status.pos = 0
@@ -256,6 +260,13 @@ final class KeyboardViewController: UIInputViewController {
         } else {
             engine?.settings = settings
         }
+        if run == nil {
+            run = RunStat()
+            runStart = status.pos
+        }
+        if settings.startHaptic && hasFullAccess {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        }
         status.total = engine?.total ?? 0
         status.state = "running"
         saveStatus()
@@ -266,12 +277,19 @@ final class KeyboardViewController: UIInputViewController {
         work?.cancel()
         guard status.state == "running" || status.state == "armed" else { return }
         status.state = "paused"
+        saveRun()
         saveStatus()
         updateAutoShift()
     }
 
+    private func saveRun() {
+        if let r = run { store.record(r) }
+    }
+
     private func stopAll() {
         work?.cancel()
+        saveRun()
+        run = nil
         engine = nil
         pendingStep = nil
         status.pos = 0
@@ -289,6 +307,8 @@ final class KeyboardViewController: UIInputViewController {
             step = n
             pendingStep = n
         } else {
+            saveRun()
+            run = nil
             engine = nil
             status.pos = status.total
             status.state = "done"
@@ -311,7 +331,16 @@ final class KeyboardViewController: UIInputViewController {
         case .dotShortcut:
             proxy.deleteBackward()
             proxy.insertText(". ")
+        case .replace(let n, let s):
+            for _ in 0..<n { proxy.deleteBackward() }
+            proxy.insertText(s)
         case .none: break
+        }
+        if var r = run {
+            r.seconds += step.delay
+            r.chars = max(0, step.pos - runStart)
+            r.typos = engine?.typoCount ?? r.typos
+            run = r
         }
         if settings.showTaps, let id = step.hl {
             kb.flash(id, duration: Double.random(in: 0.06...0.11))

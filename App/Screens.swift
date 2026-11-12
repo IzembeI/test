@@ -110,6 +110,7 @@ struct ScreenTitle: View {
 
 struct PrintTab: View {
     @EnvironmentObject var m: AppModel
+    @State private var importing = false
 
     private var total: Int { max(m.status.total, m.text.count) }
     private var progress: Double { total > 0 ? min(1, Double(m.status.pos) / Double(total)) : 0 }
@@ -130,6 +131,7 @@ struct PrintTab: View {
         statusCard.appear(0)
         editorCard.appear(1)
         launchCard.appear(2)
+        libraryCard.appear(3)
             .onChange(of: m.text) { _ in
                 if m.status.pos > 0 || m.status.state == "paused" || m.status.state == "running" { m.send("stop") }
             }
@@ -186,9 +188,49 @@ struct PrintTab: View {
                     if let s = UIPasteboard.general.string { m.text = s }
                 } label: { Label("Вставить", systemImage: "doc.on.clipboard") }
                     .buttonStyle(GlassButton())
+                Button { importing = true } label: { Label("Файл", systemImage: "doc") }
+                    .buttonStyle(GlassButton())
                 Button { m.text = "" } label: { Label("Очистить", systemImage: "trash") }
                     .buttonStyle(GlassButton())
             }
+            .lineLimit(1)
+        }
+        .glass()
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.plainText, .text]) { result in
+            if case .success(let url) = result { m.importText(url) }
+        }
+    }
+
+    private var libraryCard: some View {
+        VStack(spacing: 10) {
+            SectionLabel("Библиотека")
+            if m.library.isEmpty {
+                Text("Сохранённые тексты появятся здесь.")
+                    .font(m.font(12.5)).opacity(0.56)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            ForEach(m.library) { item in
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(item.title).font(m.font(15)).lineLimit(1)
+                        Text("\(item.text.count) символов").font(m.font(12)).opacity(0.56)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { m.text = item.text }
+                    Button {
+                        withAnimation { m.library.removeAll { $0.id == item.id } }
+                    } label: { Image(systemName: "trash").opacity(0.56) }
+                        .buttonStyle(.plain)
+                }
+                RowLine()
+            }
+            Button { withAnimation { m.saveCurrentText() } } label: {
+                Label("Сохранить текущий текст", systemImage: "plus")
+            }
+            .buttonStyle(GlassButton())
+            .disabled(m.text.isEmpty)
+            .opacity(m.text.isEmpty ? 0.5 : 1)
         }
         .glass()
     }
@@ -253,6 +295,7 @@ struct PrintTab: View {
 struct ParamsTab: View {
     @EnvironmentObject var m: AppModel
     @StateObject private var demo = DemoRunner()
+    @State private var profileName = ""
 
     private func hint(_ s: String) -> some View {
         Text(s).font(m.font(12.5)).opacity(0.56).frame(maxWidth: .infinity, alignment: .leading)
@@ -260,6 +303,47 @@ struct ParamsTab: View {
 
     var body: some View {
         ScreenTitle("Параметры")
+        VStack(spacing: 10) {
+            SectionLabel("Профили")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(m.profiles) { p in
+                        let on = m.matches(p)
+                        Text(p.name)
+                            .font(m.font(14, bold: on))
+                            .foregroundColor(on ? m.onAccent : m.textColor)
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 14)
+                            .background(on ? m.accent : m.field, in: Capsule())
+                            .overlay(Capsule().strokeBorder(on ? Color.clear : m.stroke, lineWidth: 1))
+                            .onTapGesture { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { m.apply(p) } }
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    m.profiles.removeAll { $0.id == p.id }
+                                } label: { Label("Удалить", systemImage: "trash") }
+                            }
+                    }
+                }
+            }
+            HStack(spacing: 8) {
+                TextField("Название профиля", text: $profileName)
+                    .font(m.font(15))
+                    .padding(.vertical, 9)
+                    .padding(.horizontal, 11)
+                    .background(m.field, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Button {
+                    m.saveProfile(named: profileName)
+                    profileName = ""
+                } label: { Text("Сохранить") }
+                    .buttonStyle(GlassButton())
+                    .frame(width: 120)
+                    .disabled(profileName.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            hint("Нажмите на профиль, чтобы применить. Удаление — долгим нажатием.")
+        }
+        .glass()
+        .appear(0)
+
         VStack(spacing: 10) {
             SectionLabel("Скорость")
             Segments(items: ["Ровная", "Плавающая"], selection: $m.settings.wpmMode)
@@ -273,7 +357,7 @@ struct ParamsTab: View {
             }
         }
         .glass()
-        .appear(0)
+        .appear(1)
 
         VStack(spacing: 10) {
             SectionLabel("Опечатки")
@@ -283,10 +367,13 @@ struct ParamsTab: View {
                 RowLine()
                 NumberRow(title: "Доля ошибок", subtitle: "Любой процент символов",
                           value: $m.settings.errorRate, unit: "%", decimals: 1)
+                RowLine()
+                ToggleRow(title: "Автозамена", subtitle: "Часть опечаток исправляется целым словом после пробела",
+                          isOn: $m.settings.autocorrect)
             }
         }
         .glass()
-        .appear(1)
+        .appear(2)
 
         VStack(spacing: 10) {
             SectionLabel("Ритм")
@@ -297,9 +384,11 @@ struct ParamsTab: View {
             }
             RowLine()
             ToggleRow(title: "Удобство клавиш", subtitle: "Неудобные сочетания медленнее", isOn: $m.settings.ergonomics)
+            RowLine()
+            ToggleRow(title: "Разгон и усталость", subtitle: "Медленнее в начале и на длинном тексте", isOn: $m.settings.warmup)
         }
         .glass()
-        .appear(2)
+        .appear(3)
 
         VStack(spacing: 10) {
             SectionLabel("Проба")
@@ -323,7 +412,7 @@ struct ParamsTab: View {
             .buttonStyle(GlassButton(prominent: !demo.running))
         }
         .glass()
-        .appear(3)
+        .appear(4)
         .onDisappear { demo.stop() }
     }
 }
@@ -373,6 +462,7 @@ struct SettingsTab: View {
             case "look": LookPage()
             case "fonts": FontsPage()
             case "keyboard": KeyboardPage()
+            case "stats": StatsPage()
             default: HelpPage()
             }
         } else {
@@ -383,6 +473,8 @@ struct SettingsTab: View {
                 nav("textformat", "Шрифты", m.theme.fontRegular.isEmpty ? "Системный" : m.theme.fontRegular, "fonts")
                 RowLine()
                 nav("keyboard", "Клавиатура", skins[min(max(m.settings.skin, 0), 3)], "keyboard")
+                RowLine()
+                nav("chart.bar", "Статистика", "", "stats")
                 RowLine()
                 nav("questionmark.circle", "Установка и помощь", "", "help")
             }
@@ -594,6 +686,9 @@ struct KeyboardPage: View {
             SectionLabel("Поведение")
             ToggleRow(title: "Пауза при касании", subtitle: "Любое касание клавиатуры ставит печать на паузу",
                       isOn: $m.settings.pauseOnTouch)
+            RowLine()
+            ToggleRow(title: "Сигнал старта", subtitle: "Короткая вибрация, когда печать началась. Нужен «Полный доступ»",
+                      isOn: $m.settings.startHaptic)
         }
         .glass()
         .appear(1)
@@ -607,6 +702,70 @@ struct KeyboardPage: View {
         }
         .glass()
         .appear(2)
+    }
+}
+
+struct StatsPage: View {
+    @EnvironmentObject var m: AppModel
+
+    private func cell(_ value: String, _ name: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value).font(m.font(22, bold: true)).monospacedDigit()
+            Text(name).font(m.font(12)).opacity(0.56)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func date(_ t: Double) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ru_RU")
+        f.dateFormat = "d MMM, HH:mm"
+        return f.string(from: Date(timeIntervalSince1970: t))
+    }
+
+    var body: some View {
+        ScreenTitle("Статистика")
+        let chars = m.stats.reduce(0) { $0 + $1.chars }
+        let secs = m.stats.reduce(0) { $0 + $1.seconds }
+        let typos = m.stats.reduce(0) { $0 + $1.typos }
+        VStack(spacing: 10) {
+            SectionLabel("Всего")
+            HStack {
+                cell(secs > 0 ? String(format: "%.0f", Double(chars) / 5 / (secs / 60)) : "—", "впм в среднем")
+                cell("\(chars)", "символов")
+                cell("\(typos)", "опечаток")
+            }
+        }
+        .glass()
+        .appear(0)
+        .onAppear { m.loadStats() }
+
+        VStack(spacing: 10) {
+            SectionLabel("Запуски")
+            if m.stats.isEmpty {
+                Text("Пока пусто. Статистика появится после первой печати.")
+                    .font(m.font(12.5)).opacity(0.56)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            ForEach(m.stats) { r in
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(date(r.date)).font(m.font(15))
+                        Text("\(r.chars) символов · \(r.typos) опечаток · \(Int(r.seconds)) с")
+                            .font(m.font(12)).opacity(0.56)
+                    }
+                    Spacer()
+                    Text(String(format: "%.0f впм", r.wpm)).font(m.font(15, bold: true)).monospacedDigit()
+                }
+                RowLine()
+            }
+            if !m.stats.isEmpty {
+                Button { withAnimation { m.clearStats() } } label: { Label("Очистить", systemImage: "trash") }
+                    .buttonStyle(GlassButton())
+            }
+        }
+        .glass()
+        .appear(1)
     }
 }
 
@@ -629,9 +788,9 @@ struct HelpPage: View {
         ScreenTitle("Установка")
         VStack(spacing: 12) {
             SectionLabel("Клавиатура")
-            row("1", "Настройки → Основные → Клавиатура → Клавиатуры → Новые клавиатуры → AutoTyper.")
+            row("1", "Настройки → Основные → Клавиатура → Клавиатуры → Новые клавиатуры → Mercury.")
             row("2", "Откройте её в списке и включите «Полный доступ» — нужен для буфера обмена и вибрации.")
-            row("3", "В любом поле ввода удерживайте кнопку с глобусом и выберите AutoTyper.")
+            row("3", "В любом поле ввода удерживайте кнопку с глобусом и выберите Mercury.")
             Button {
                 if let u = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(u) }
             } label: { Label("Открыть настройки", systemImage: "arrow.up.forward.app") }
@@ -658,7 +817,7 @@ struct HelpPage: View {
 
         VStack(spacing: 10) {
             SectionLabel("Проверка")
-            TextField("Коснитесь и выберите клавиатуру AutoTyper", text: $test, axis: .vertical)
+            TextField("Коснитесь и выберите клавиатуру Mercury", text: $test, axis: .vertical)
                 .font(m.font(15))
                 .lineLimit(3...8)
                 .padding(11)
