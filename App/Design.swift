@@ -8,19 +8,13 @@ extension Color {
     }
 }
 
-// MARK: - Animated background
+// MARK: - Background
 
 struct BackgroundView: View {
     @EnvironmentObject var m: AppModel
 
-    private func color(_ i: Int) -> Color {
-        let bg = m.theme.bg
-        return Color(hex: bg.isEmpty ? "000000" : bg[i % bg.count])
-    }
-
     var body: some View {
         ZStack {
-            color(0)
             if m.theme.useImage, let img = m.bgImage {
                 GeometryReader { g in
                     Image(uiImage: img)
@@ -32,62 +26,45 @@ struct BackgroundView: View {
                 }
                 Color.black.opacity(m.theme.dim)
             } else {
+                m.theme.gradient
+                // Slow rotating sheen that makes the gradient shimmer.
                 TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !m.theme.animated)) { tl in
                     let t = tl.date.timeIntervalSinceReferenceDate * m.theme.speed
-                    ZStack {
-                        Canvas { ctx, size in
-                            ctx.addFilter(.blur(radius: 70))
-                            for k in 0..<6 {
-                                let f = Double(k)
-                                let x = size.width * (0.5 + 0.42 * sin(t * (0.11 + f * 0.023) + f * 1.7))
-                                let y = size.height * (0.5 + 0.42 * cos(t * (0.09 + f * 0.031) + f * 2.3))
-                                let r = size.width * (0.32 + 0.08 * sin(t * 0.2 + f))
-                                let rect = CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)
-                                ctx.fill(Path(ellipseIn: rect), with: .color(color(1 + k % 2).opacity(0.5)))
-                            }
-                        }
-                        AngularGradient(colors: [color(1), color(0), m.accent, color(2), color(1)], center: .center,
-                                        angle: .degrees(t * 14))
-                            .opacity(0.16)
-                            .blur(radius: 50)
-                            .blendMode(.screen)
-                    }
+                    let mid = Color(hex: m.theme.bg.count > 1 ? m.theme.bg[1] : "808080")
+                    AngularGradient(colors: [.clear, mid, .white.opacity(0.5), .clear, m.accent.opacity(0.5), .clear, .clear],
+                                    center: .center, angle: .degrees(t * 14))
+                        .scaleEffect(1.8)
+                        .blur(radius: 70)
+                        .opacity(m.isLight ? 0.45 : 0.36)
                 }
-                Color.black.opacity(0.28)
             }
         }
         .ignoresSafeArea()
     }
 }
 
-// MARK: - Glass
+// MARK: - Glass card
 
 struct Glass: ViewModifier {
-    var radius: CGFloat = 24
-    var padding: CGFloat = 16
+    @EnvironmentObject var m: AppModel
+    var radius: CGFloat = 20
+    var padding: CGFloat = 14
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         content
             .padding(padding)
             .background(.ultraThinMaterial, in: shape)
-            .overlay(
-                shape.strokeBorder(
-                    LinearGradient(colors: [.white.opacity(0.5), .white.opacity(0.06), .white.opacity(0.22)],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing),
-                    lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
+            .overlay(shape.strokeBorder(m.stroke, lineWidth: 1))
     }
 }
 
 extension View {
-    func glass(radius: CGFloat = 24, padding: CGFloat = 16) -> some View {
+    func glass(radius: CGFloat = 20, padding: CGFloat = 14) -> some View {
         modifier(Glass(radius: radius, padding: padding))
     }
 
     func appear(_ index: Int) -> some View { modifier(Appear(index: index)) }
-    func shimmer() -> some View { modifier(Shimmer()) }
 }
 
 struct Appear: ViewModifier {
@@ -97,29 +74,12 @@ struct Appear: ViewModifier {
     func body(content: Content) -> some View {
         content
             .opacity(shown ? 1 : 0)
-            .offset(y: shown ? 0 : 22)
-            .scaleEffect(shown ? 1 : 0.97)
+            .offset(y: shown ? 0 : 14)
             .onAppear {
-                withAnimation(.spring(response: 0.55, dampingFraction: 0.8).delay(Double(index) * 0.07)) {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.85).delay(Double(index) * 0.05)) {
                     shown = true
                 }
             }
-    }
-}
-
-struct Shimmer: ViewModifier {
-    func body(content: Content) -> some View {
-        content.overlay(
-            TimelineView(.animation(minimumInterval: 1.0 / 30)) { tl in
-                let p = tl.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2.6) / 2.6
-                LinearGradient(colors: [.clear, .white.opacity(0.95), .clear],
-                               startPoint: UnitPoint(x: -0.6 + p * 2.2, y: 0),
-                               endPoint: UnitPoint(x: -0.2 + p * 2.2, y: 1))
-                    .blendMode(.overlay)
-            }
-            .mask(content)
-            .allowsHitTesting(false)
-        )
     }
 }
 
@@ -139,41 +99,99 @@ struct GlassButtonBody: View {
     let prominent: Bool
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         configuration.label
-            .font(m.font(16, bold: true))
-            .foregroundColor(prominent ? (m.accent.isLight ? .black : .white) : m.textColor)
-            .padding(.vertical, 14)
-            .padding(.horizontal, 16)
+            .font(m.font(15, bold: true))
+            .foregroundColor(prominent ? m.onAccent : m.textColor)
+            .padding(.vertical, 12)
+            .padding(.horizontal, 10)
             .frame(maxWidth: .infinity)
-            .background(
-                ZStack {
-                    if prominent {
-                        shape.fill(LinearGradient(colors: [m.accent, m.accent.opacity(0.72)],
-                                                  startPoint: .topLeading, endPoint: .bottomTrailing))
-                    } else {
-                        shape.fill(.ultraThinMaterial)
-                    }
-                    shape.strokeBorder(.white.opacity(prominent ? 0.55 : 0.25), lineWidth: 1)
-                }
-            )
-            .shadow(color: prominent ? m.accent.opacity(0.35) : .clear, radius: 14, y: 4)
-            .scaleEffect(configuration.isPressed ? 0.95 : 1)
-            .opacity(configuration.isPressed ? 0.85 : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: configuration.isPressed)
+            .background(shape.fill(prominent ? m.accent : m.field))
+            .overlay(shape.strokeBorder(prominent ? Color.clear : m.stroke, lineWidth: 1))
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .opacity(configuration.isPressed ? 0.8 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.65), value: configuration.isPressed)
     }
 }
 
-struct SectionTitle: View {
+struct SectionLabel: View {
     @EnvironmentObject var m: AppModel
-    let icon: String
     let title: String
 
+    init(_ title: String) { self.title = title }
+
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon).foregroundColor(m.accent)
-            Text(title).font(m.font(18, bold: true))
-            Spacer()
+        Text(title.uppercased())
+            .font(m.font(11.5, bold: true))
+            .kerning(0.7)
+            .opacity(0.56)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct RowLine: View {
+    @EnvironmentObject var m: AppModel
+    var body: some View { Rectangle().fill(m.stroke).frame(height: 1) }
+}
+
+struct RowTitle: View {
+    @EnvironmentObject var m: AppModel
+    let title: String
+    var subtitle = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title).font(m.font(15))
+            if !subtitle.isEmpty {
+                Text(subtitle).font(m.font(12)).opacity(0.56)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A value that is typed in by hand: any number is accepted.
+struct NumberRow: View {
+    @EnvironmentObject var m: AppModel
+    let title: String
+    var subtitle = ""
+    @Binding var value: Double
+    var unit = ""
+    var decimals = 0
+
+    @State private var input = ""
+    @FocusState private var focused: Bool
+
+    private var formatted: String { String(format: "%.\(decimals)f", value) }
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
+        HStack(spacing: 12) {
+            RowTitle(title: title, subtitle: subtitle)
+            HStack(spacing: 3) {
+                TextField("0", text: $input)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .focused($focused)
+                    .frame(width: 58)
+                    .font(m.font(15, bold: true))
+                    .monospacedDigit()
+                if !unit.isEmpty {
+                    Text(unit).font(m.font(14)).opacity(0.56)
+                }
+            }
+            .padding(.vertical, 5)
+            .padding(.horizontal, 9)
+            .background(m.field, in: shape)
+            .overlay(shape.strokeBorder(focused ? m.accent : m.stroke, lineWidth: 1))
+            .onTapGesture { focused = true }
+        }
+        .onAppear { input = formatted }
+        .onChange(of: value) { _ in if !focused { input = formatted } }
+        .onChange(of: focused) { f in if !f { input = formatted } }
+        .onChange(of: input) { t in
+            guard focused, let v = Double(t.replacingOccurrences(of: ",", with: ".")), v >= 0 else { return }
+            value = v
         }
     }
 }
@@ -186,62 +204,59 @@ struct SliderRow: View {
     var step: Double = 1
     var unit = ""
     var decimals = 0
-    var free = false            // any value can be typed in, the slider is only a shortcut
-
-    @State private var input = ""
-    @FocusState private var focused: Bool
-
-    private var formatted: String { String(format: "%.\(decimals)f", value) }
 
     var body: some View {
         VStack(spacing: 6) {
-            HStack(spacing: 4) {
+            HStack {
                 Text(title).font(m.font(15))
                 Spacer()
-                TextField("", text: $input)
-                    .keyboardType(.decimalPad)
-                    .multilineTextAlignment(.trailing)
-                    .focused($focused)
-                    .frame(width: 76)
-                    .padding(.vertical, 3)
-                    .padding(.horizontal, 6)
-                    .background(.white.opacity(focused ? 0.16 : 0.07), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                Text(String(format: "%.\(decimals)f", value) + unit)
                     .font(m.font(15, bold: true))
-                    .foregroundColor(m.accent)
                     .monospacedDigit()
-                if !unit.isEmpty {
-                    Text(unit).font(m.font(15, bold: true)).foregroundColor(m.accent)
-                }
             }
-            Slider(value: Binding(get: { min(max(value, range.lowerBound), range.upperBound) },
-                                  set: { value = $0 }),
-                   in: range, step: step)
+            Slider(value: $value, in: range, step: step)
         }
-        .onAppear { input = formatted }
-        .onChange(of: value) { _ in if !focused { input = formatted } }
-        .onChange(of: focused) { f in if !f { input = formatted } }
-        .onChange(of: input) { t in
-            guard focused, let v = Double(t.replacingOccurrences(of: ",", with: ".")), v >= 0 else { return }
-            value = free ? v : min(max(v, range.lowerBound), range.upperBound)
+    }
+}
+
+struct SwitchStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        SwitchBody(configuration: configuration)
+    }
+}
+
+struct SwitchBody: View {
+    @EnvironmentObject var m: AppModel
+    let configuration: ToggleStyleConfiguration
+
+    var body: some View {
+        HStack(spacing: 12) {
+            configuration.label
+            Capsule()
+                .fill(configuration.isOn ? m.accent : m.field)
+                .overlay(Capsule().strokeBorder(configuration.isOn ? Color.clear : m.stroke, lineWidth: 1))
+                .frame(width: 46, height: 28)
+                .overlay(
+                    Circle()
+                        .fill(configuration.isOn ? m.onAccent : m.textColor.opacity(0.56))
+                        .padding(2)
+                        .offset(x: configuration.isOn ? 9 : -9)
+                )
+                .onTapGesture {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { configuration.isOn.toggle() }
+                }
         }
     }
 }
 
 struct ToggleRow: View {
-    @EnvironmentObject var m: AppModel
     let title: String
     var subtitle = ""
     @Binding var isOn: Bool
 
     var body: some View {
-        Toggle(isOn: $isOn.animation(.spring(response: 0.35, dampingFraction: 0.8))) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(m.font(15))
-                if !subtitle.isEmpty {
-                    Text(subtitle).font(m.font(12)).opacity(0.6)
-                }
-            }
-        }
+        Toggle(isOn: $isOn) { RowTitle(title: title, subtitle: subtitle) }
+            .toggleStyle(SwitchStyle())
     }
 }
 
@@ -252,28 +267,29 @@ struct Segments: View {
     @Namespace private var ns
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             ForEach(items.indices, id: \.self) { i in
                 Text(items[i])
-                    .font(m.font(14, bold: selection == i))
-                    .foregroundColor(selection == i ? (m.accent.isLight ? .black : .white) : m.textColor)
+                    .font(m.font(13.5, bold: selection == i))
+                    .foregroundColor(selection == i ? m.onAccent : m.textColor.opacity(0.56))
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 9)
+                    .padding(.vertical, 7)
                     .background(
                         ZStack {
                             if selection == i {
-                                Capsule().fill(m.accent).matchedGeometryEffect(id: "seg", in: ns)
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(m.accent)
+                                    .matchedGeometryEffect(id: "seg", in: ns)
                             }
                         }
                     )
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { selection = i }
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { selection = i }
                     }
             }
         }
-        .padding(4)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(.white.opacity(0.2), lineWidth: 1))
+        .padding(3)
+        .background(m.field, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
     }
 }

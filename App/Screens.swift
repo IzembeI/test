@@ -10,7 +10,7 @@ struct AutoTyperApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(model)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(model.isLight ? .light : .dark)
         }
     }
 }
@@ -20,33 +20,31 @@ struct AutoTyperApp: App {
 struct ContentView: View {
     @EnvironmentObject var m: AppModel
     @State private var tab = 0
+    @State private var page: String?            // settings sub-page
     @Namespace private var ns
 
     private let tabs: [(icon: String, name: String)] = [
-        ("text.cursor", "Текст"), ("speedometer", "Скорость"), ("keyboard", "Печать"),
-        ("paintpalette", "Стиль"), ("questionmark.circle", "Помощь")
+        ("character.cursor.ibeam", "Печать"), ("slider.horizontal.3", "Параметры"), ("gearshape", "Настройки")
     ]
+
+    private var screenID: String { tab == 2 ? "s-\(page ?? "root")" : "t-\(tab)" }
 
     var body: some View {
         ZStack {
             BackgroundView()
             ScrollView(showsIndicators: false) {
-                VStack(spacing: 16) {
-                    header
-                    Group {
-                        switch tab {
-                        case 0: TextTab()
-                        case 1: SpeedTab()
-                        case 2: TypingTab()
-                        case 3: StyleTab()
-                        default: HelpTab()
-                        }
+                VStack(spacing: 12) {
+                    switch tab {
+                    case 0: PrintTab()
+                    case 1: ParamsTab()
+                    default: SettingsTab(page: $page)
                     }
-                    .id(tab)
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 }
+                .id(screenID)
+                .transition(.opacity)
                 .padding(.horizontal, 16)
-                .padding(.bottom, 120)
+                .padding(.top, 10)
+                .padding(.bottom, 110)
             }
             .scrollDismissesKeyboard(.interactively)
             VStack {
@@ -57,37 +55,23 @@ struct ContentView: View {
         }
         .foregroundColor(m.textColor)
         .tint(m.accent)
-    }
-
-    private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text("AutoTyper")
-                .font(m.font(34, bold: true))
-                .shimmer()
-            Spacer()
-            Text(tabs[tab].name)
-                .font(m.font(15))
-                .opacity(0.6)
-        }
-        .padding(.top, 8)
+        .animation(.easeInOut(duration: 0.45), value: m.theme)
     }
 
     private var tabBar: some View {
         HStack(spacing: 0) {
             ForEach(tabs.indices, id: \.self) { i in
                 VStack(spacing: 3) {
-                    Image(systemName: tabs[i].icon)
-                        .font(.system(size: 19, weight: .semibold))
-                        .scaleEffect(tab == i ? 1.15 : 1)
-                    Text(tabs[i].name).font(m.font(10))
+                    Image(systemName: tabs[i].icon).font(.system(size: 18, weight: .medium))
+                    Text(tabs[i].name).font(m.font(10.5))
                 }
-                .foregroundColor(tab == i ? (m.accent.isLight ? .black : .white) : m.textColor.opacity(0.75))
+                .foregroundColor(tab == i ? m.onAccent : m.textColor.opacity(0.56))
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
+                .padding(.vertical, 7)
                 .background(
                     ZStack {
                         if tab == i {
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            RoundedRectangle(cornerRadius: 17, style: .continuous)
                                 .fill(m.accent)
                                 .matchedGeometryEffect(id: "tab", in: ns)
                         }
@@ -95,24 +79,40 @@ struct ContentView: View {
                 )
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) { tab = i }
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.8)) {
+                        tab = i
+                        page = nil
+                    }
                 }
             }
         }
-        .glass(radius: 26, padding: 6)
-        .padding(.horizontal, 16)
+        .glass(radius: 22, padding: 5)
+        .padding(.horizontal, 14)
         .padding(.bottom, 6)
     }
 }
 
-// MARK: - Text & launch
+struct ScreenTitle: View {
+    @EnvironmentObject var m: AppModel
+    let title: String
 
-struct TextTab: View {
+    init(_ title: String) { self.title = title }
+
+    var body: some View {
+        Text(title)
+            .font(m.font(28, bold: true))
+            .kerning(-0.5)
+            .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+    }
+}
+
+// MARK: - Print
+
+struct PrintTab: View {
     @EnvironmentObject var m: AppModel
 
-    private var progress: Double {
-        m.status.total > 0 ? min(1, Double(m.status.pos) / Double(m.status.total)) : 0
-    }
+    private var total: Int { max(m.status.total, m.text.count) }
+    private var progress: Double { total > 0 ? min(1, Double(m.status.pos) / Double(total)) : 0 }
 
     private var stateName: String {
         if m.waitingForKeyboard { return "Запуск" }
@@ -126,83 +126,67 @@ struct TextTab: View {
     }
 
     var body: some View {
-        VStack(spacing: 16) {
-            statusCard.appear(0)
-            editorCard.appear(1)
-            launchCard.appear(2)
-        }
-        .onChange(of: m.text) { _ in
-            if m.status.pos > 0 || m.status.state == "paused" || m.status.state == "running" { m.send("stop") }
-        }
+        ScreenTitle("Печать")
+        statusCard.appear(0)
+        editorCard.appear(1)
+        launchCard.appear(2)
+            .onChange(of: m.text) { _ in
+                if m.status.pos > 0 || m.status.state == "paused" || m.status.state == "running" { m.send("stop") }
+            }
     }
 
     private var statusCard: some View {
-        HStack(spacing: 16) {
-            ZStack {
-                Circle().stroke(.white.opacity(0.15), lineWidth: 7)
-                Circle()
-                    .trim(from: 0, to: progress)
-                    .stroke(m.accent, style: StrokeStyle(lineWidth: 7, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .animation(.easeOut(duration: 0.4), value: progress)
-                Text("\(Int(progress * 100))%").font(m.font(15, bold: true)).monospacedDigit()
-            }
-            .frame(width: 68, height: 68)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(stateName).font(m.font(20, bold: true))
+        VStack(spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(stateName).font(m.font(22, bold: true))
+                Spacer()
                 if m.waitingForKeyboard, let cmd = m.lastCommand {
                     TimelineView(.periodic(from: .now, by: 0.1)) { tl in
                         let left = cmd.fireAt - tl.date.timeIntervalSince1970
-                        Text(left > 0
-                             ? String(format: "Старт через %.1f с — откройте поле ввода", left)
-                             : "Жду, когда откроется клавиатура…")
-                            .font(m.font(13))
-                            .opacity(0.75)
+                        Text(left > 0 ? String(format: "через %.1f с", left) : "жду клавиатуру")
+                            .font(m.font(13)).opacity(0.56).monospacedDigit()
                     }
                 } else {
-                    Text("\(m.status.pos) из \(max(m.status.total, m.text.count)) символов")
-                        .font(m.font(13))
-                        .opacity(0.75)
-                        .monospacedDigit()
+                    Text("\(m.status.pos) / \(total) · \(Int(progress * 100))%")
+                        .font(m.font(13)).opacity(0.56).monospacedDigit()
                 }
             }
-            Spacer()
+            GeometryReader { g in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(m.field)
+                    Capsule().fill(m.accent).frame(width: g.size.width * progress)
+                }
+            }
+            .frame(height: 5)
+            .animation(.easeOut(duration: 0.4), value: progress)
         }
         .glass()
     }
 
     private var editorCard: some View {
         VStack(spacing: 12) {
-            SectionTitle(icon: "doc.text", title: "Текст")
+            SectionLabel("Текст")
             ZStack(alignment: .topLeading) {
                 if m.text.isEmpty {
                     Text("Вставьте или введите текст, который нужно напечатать")
-                        .font(m.font(15))
-                        .opacity(0.4)
-                        .padding(.top, 8)
-                        .padding(.leading, 5)
+                        .font(m.font(15)).opacity(0.4)
+                        .padding(.top, 8).padding(.leading, 5)
                 }
                 TextEditor(text: $m.text)
                     .font(m.font(15))
                     .scrollContentBackground(.hidden)
-                    .frame(minHeight: 170, maxHeight: 260)
+                    .frame(minHeight: 150, maxHeight: 260)
             }
-            HStack {
-                let words = m.text.split(whereSeparator: { $0.isWhitespace }).count
-                Text("\(m.text.count) симв. · \(words) слов · ≈ \(timeString(m.estimatedSeconds))")
-                    .font(m.font(12))
-                    .opacity(0.65)
-                    .monospacedDigit()
-                Spacer()
-            }
-            HStack(spacing: 10) {
+            let words = m.text.split(whereSeparator: { $0.isWhitespace }).count
+            Text("\(m.text.count) символов · \(words) слов · около \(timeString(m.estimatedSeconds))")
+                .font(m.font(12.5)).opacity(0.56).monospacedDigit()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 8) {
                 Button {
                     if let s = UIPasteboard.general.string { m.text = s }
                 } label: { Label("Вставить", systemImage: "doc.on.clipboard") }
                     .buttonStyle(GlassButton())
-                Button {
-                    m.text = ""
-                } label: { Label("Очистить", systemImage: "trash") }
+                Button { m.text = "" } label: { Label("Очистить", systemImage: "trash") }
                     .buttonStyle(GlassButton())
             }
         }
@@ -210,9 +194,10 @@ struct TextTab: View {
     }
 
     private var launchCard: some View {
-        VStack(spacing: 14) {
-            SectionTitle(icon: "timer", title: "Запуск")
-            SliderRow(title: "Таймер до старта", value: $m.settings.startDelay, range: 0...30, unit: "с", free: true)
+        VStack(spacing: 12) {
+            SectionLabel("Запуск")
+            NumberRow(title: "Таймер до старта", subtitle: "Успейте открыть нужное поле ввода",
+                      value: $m.settings.startDelay, unit: "с")
             let state = m.status.state
             if m.waitingForKeyboard {
                 Button {
@@ -220,7 +205,7 @@ struct TextTab: View {
                 } label: { Label("Отменить запуск", systemImage: "xmark") }
                     .buttonStyle(GlassButton())
             } else if state == "running" || state == "armed" {
-                HStack(spacing: 10) {
+                HStack(spacing: 8) {
                     Button { m.send("pause") } label: { Label("Пауза", systemImage: "pause.fill") }
                         .buttonStyle(GlassButton(prominent: true))
                     Button { m.send("stop") } label: { Label("Стоп", systemImage: "stop.fill") }
@@ -231,7 +216,7 @@ struct TextTab: View {
                     Label("Продолжить с \(m.status.pos)-го символа", systemImage: "play.fill")
                 }
                 .buttonStyle(GlassButton(prominent: true))
-                HStack(spacing: 10) {
+                HStack(spacing: 8) {
                     Button { m.send("start", delay: m.settings.startDelay) } label: {
                         Label("Сначала", systemImage: "arrow.counterclockwise")
                     }
@@ -247,15 +232,14 @@ struct TextTab: View {
                 .disabled(m.text.isEmpty)
                 .opacity(m.text.isEmpty ? 0.5 : 1)
             }
-            Text(m.store.isShared
-                 ? "Нажмите старт, перейдите в нужное приложение и коснитесь поля ввода — печать начнётся по таймеру."
-                 : "Общий контейнер недоступен при этой подписи. Скопируйте текст и вставьте его кнопкой буфера на панели клавиатуры (долгое нажатие «123»).")
-                .font(m.font(12))
-                .opacity(0.6)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if !m.store.isShared {
+                Text("Связь с клавиатурой недоступна при этой подписи. Скопируйте текст и вставьте его кнопкой буфера на панели клавиатуры (долгое нажатие «123»).")
+                    .font(m.font(12.5)).opacity(0.56)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .glass()
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: m.status.state)
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: m.status.state)
     }
 
     private func timeString(_ s: Double) -> String {
@@ -264,246 +248,277 @@ struct TextTab: View {
     }
 }
 
-// MARK: - Speed
+// MARK: - Parameters
 
-struct SpeedTab: View {
+struct ParamsTab: View {
     @EnvironmentObject var m: AppModel
     @StateObject private var demo = DemoRunner()
 
+    private func hint(_ s: String) -> some View {
+        Text(s).font(m.font(12.5)).opacity(0.56).frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     var body: some View {
-        VStack(spacing: 16) {
-            VStack(spacing: 14) {
-                SectionTitle(icon: "speedometer", title: "Скорость")
-                Segments(items: ["Ровный", "Плавающий"], selection: $m.settings.wpmMode)
-                if m.settings.wpmMode == 0 {
-                    SliderRow(title: "Скорость", value: $m.settings.wpm, range: 20...300, unit: "впм", free: true)
-                } else {
-                    SliderRow(title: "От", value: $m.settings.wpmMin, range: 20...300, unit: "впм", free: true)
-                    SliderRow(title: "До", value: $m.settings.wpmMax, range: 20...300, unit: "впм", free: true)
-                    Text("Темп плавно гуляет между значениями: то разгоняется, то сбавляет.")
-                        .font(m.font(12)).opacity(0.6)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+        ScreenTitle("Параметры")
+        VStack(spacing: 10) {
+            SectionLabel("Скорость")
+            Segments(items: ["Ровная", "Плавающая"], selection: $m.settings.wpmMode)
+            if m.settings.wpmMode == 0 {
+                NumberRow(title: "Скорость", value: $m.settings.wpm, unit: "впм")
+            } else {
+                NumberRow(title: "От", value: $m.settings.wpmMin, unit: "впм")
+                RowLine()
+                NumberRow(title: "До", value: $m.settings.wpmMax, unit: "впм")
+                hint("Темп плавно гуляет между значениями.")
             }
-            .glass()
-            .appear(0)
-
-            VStack(spacing: 14) {
-                SectionTitle(icon: "waveform.path", title: "Ритм")
-                ToggleRow(title: "Микропаузы",
-                          subtitle: "После слов, знаков препинания и редкие заминки",
-                          isOn: $m.settings.micropauses)
-                if m.settings.micropauses {
-                    SliderRow(title: "Сила пауз", value: $m.settings.pauseStrength, range: 0.2...2, step: 0.1, decimals: 1)
-                }
-                ToggleRow(title: "Учитывать удобство клавиш",
-                          subtitle: "Удобные слова — быстрее, неудобные сочетания — медленнее",
-                          isOn: $m.settings.ergonomics)
-            }
-            .glass()
-            .appear(1)
-
-            VStack(spacing: 12) {
-                SectionTitle(icon: "play.rectangle", title: "Проба")
-                Text(demo.output.isEmpty ? "Здесь видно, как будет выглядеть печать." : demo.output)
-                    .font(m.font(15))
-                    .opacity(demo.output.isEmpty ? 0.5 : 1)
-                    .frame(maxWidth: .infinity, minHeight: 70, alignment: .topLeading)
-                HStack {
-                    Text(demo.wpm > 0 ? String(format: "%.0f впм", demo.wpm) : "— впм")
-                        .font(m.font(14, bold: true))
-                        .foregroundColor(m.accent)
-                        .monospacedDigit()
-                    Spacer()
-                }
-                Button {
-                    if demo.running {
-                        demo.stop()
-                    } else {
-                        let sample = "Привет! Это проверка печати: длинные удобные слова набираются быстрее, а неудобные чуть медленнее."
-                        demo.start(text: m.text.isEmpty ? sample : String(m.text.prefix(400)), settings: m.settings)
-                    }
-                } label: {
-                    Label(demo.running ? "Остановить" : "Показать", systemImage: demo.running ? "stop.fill" : "play.fill")
-                }
-                .buttonStyle(GlassButton(prominent: !demo.running))
-            }
-            .glass()
-            .appear(2)
         }
+        .glass()
+        .appear(0)
+
+        VStack(spacing: 10) {
+            SectionLabel("Опечатки")
+            ToggleRow(title: "Имитация ошибок", subtitle: "Ошибается, стирает и печатает заново",
+                      isOn: $m.settings.errorsEnabled)
+            if m.settings.errorsEnabled {
+                RowLine()
+                NumberRow(title: "Доля ошибок", subtitle: "Любой процент символов",
+                          value: $m.settings.errorRate, unit: "%", decimals: 1)
+            }
+        }
+        .glass()
+        .appear(1)
+
+        VStack(spacing: 10) {
+            SectionLabel("Ритм")
+            ToggleRow(title: "Микропаузы", subtitle: "После слов и знаков препинания", isOn: $m.settings.micropauses)
+            if m.settings.micropauses {
+                RowLine()
+                NumberRow(title: "Сила пауз", subtitle: "1.0 — обычная", value: $m.settings.pauseStrength, decimals: 1)
+            }
+            RowLine()
+            ToggleRow(title: "Удобство клавиш", subtitle: "Неудобные сочетания медленнее", isOn: $m.settings.ergonomics)
+        }
+        .glass()
+        .appear(2)
+
+        VStack(spacing: 10) {
+            SectionLabel("Проба")
+            Text(demo.output.isEmpty ? "Здесь видно, как будет выглядеть печать." : demo.output)
+                .font(m.font(15))
+                .opacity(demo.output.isEmpty ? 0.5 : 1)
+                .frame(maxWidth: .infinity, minHeight: 66, alignment: .topLeading)
+            Text(demo.wpm > 0 ? String(format: "%.0f впм", demo.wpm) : "— впм")
+                .font(m.font(13, bold: true)).monospacedDigit()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                if demo.running {
+                    demo.stop()
+                } else {
+                    let sample = "Привет! Это проверка печати: длинные удобные слова набираются быстрее, а неудобные чуть медленнее."
+                    demo.start(text: m.text.isEmpty ? sample : String(m.text.prefix(400)), settings: m.settings)
+                }
+            } label: {
+                Label(demo.running ? "Остановить" : "Показать", systemImage: demo.running ? "stop.fill" : "play.fill")
+            }
+            .buttonStyle(GlassButton(prominent: !demo.running))
+        }
+        .glass()
+        .appear(3)
         .onDisappear { demo.stop() }
     }
 }
 
-// MARK: - Typos & keyboard
+// MARK: - Settings
 
-struct TypingTab: View {
+struct SettingsTab: View {
     @EnvironmentObject var m: AppModel
+    @Binding var page: String?
+
+    private let skins = ["iOS", "Тёмная", "Светлая", "Material"]
+
+    private func go(_ p: String?) {
+        withAnimation(.easeInOut(duration: 0.25)) { page = p }
+    }
+
+    private func nav(_ icon: String, _ title: String, _ value: String, _ target: String) -> some View {
+        Button { go(target) } label: {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .medium))
+                    .frame(width: 30, height: 30)
+                    .background(m.field, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(m.stroke, lineWidth: 1))
+                Text(title).font(m.font(15.5))
+                Spacer()
+                Text(value).font(m.font(14)).opacity(0.56).lineLimit(1)
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).opacity(0.4)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
 
     var body: some View {
-        VStack(spacing: 16) {
-            VStack(spacing: 14) {
-                SectionTitle(icon: "character.cursor.ibeam", title: "Опечатки")
-                ToggleRow(title: "Имитация ошибок",
-                          subtitle: "Ошибается, замечает, стирает и печатает заново",
-                          isOn: $m.settings.errorsEnabled)
-                if m.settings.errorsEnabled {
-                    SliderRow(title: "Доля ошибок", value: $m.settings.errorRate, range: 0...15, step: 0.5, unit: "%", decimals: 1, free: true)
-                    Text("Соседняя клавиша, перепутанные буквы, двойное нажатие, пропуск. Иногда замечает сразу, иногда через пару букв.")
-                        .font(m.font(12)).opacity(0.6)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+        if let p = page {
+            Button { go(nil) } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "chevron.left").font(.system(size: 15, weight: .semibold))
+                    Text("Настройки").font(m.font(15))
                 }
+                .foregroundColor(m.accent)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            switch p {
+            case "look": LookPage()
+            case "fonts": FontsPage()
+            case "keyboard": KeyboardPage()
+            default: HelpPage()
+            }
+        } else {
+            ScreenTitle("Настройки")
+            VStack(spacing: 10) {
+                nav("paintbrush", "Оформление", m.theme.name, "look")
+                RowLine()
+                nav("textformat", "Шрифты", m.theme.fontRegular.isEmpty ? "Системный" : m.theme.fontRegular, "fonts")
+                RowLine()
+                nav("keyboard", "Клавиатура", skins[min(max(m.settings.skin, 0), 3)], "keyboard")
+                RowLine()
+                nav("questionmark.circle", "Установка и помощь", "", "help")
             }
             .glass()
             .appear(0)
-
-            VStack(spacing: 14) {
-                SectionTitle(icon: "keyboard", title: "Клавиатура")
-                Segments(items: ["iOS", "Тёмная", "Светлая", "Material"], selection: $m.settings.skin)
-                ToggleRow(title: "Показывать нажатия",
-                          subtitle: "Клавиши подсвечиваются, как от пальца",
-                          isOn: $m.settings.showTaps)
-                ToggleRow(title: "Пауза при касании",
-                          subtitle: "Любое касание клавиатуры ставит печать на паузу",
-                          isOn: $m.settings.pauseOnTouch)
-                ToggleRow(title: "Звук клавиш", isOn: $m.settings.clickSound)
-                ToggleRow(title: "Вибрация", subtitle: "Нужен «Полный доступ»", isOn: $m.settings.haptics)
-            }
-            .glass()
-            .appear(1)
-
-            VStack(spacing: 14) {
-                SectionTitle(icon: "return", title: "Перенос строки")
-                Segments(items: ["Ввод", "Пробел", "Пропуск"], selection: $m.settings.newlineMode)
-                Text("В мессенджерах «Ввод» может отправить сообщение — тогда выберите пробел.")
-                    .font(m.font(12)).opacity(0.6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .glass()
-            .appear(2)
         }
     }
 }
 
-// MARK: - Style
-
-struct StyleTab: View {
+struct LookPage: View {
     @EnvironmentObject var m: AppModel
     @State private var photo: PhotosPickerItem?
-    @State private var importing = false
 
-    private func colorBinding(_ get: @escaping () -> String, _ set: @escaping (String) -> Void) -> Binding<Color> {
+    private func binding(_ get: @escaping () -> String, _ set: @escaping (String) -> Void) -> Binding<Color> {
         Binding(get: { Color(hex: get()) }, set: { set($0.hex); m.theme.preset = "custom" })
     }
 
-    private func bgBinding(_ i: Int) -> Binding<Color> {
-        colorBinding({ i < m.theme.bg.count ? m.theme.bg[i] : "000000" },
-                     { v in if i < m.theme.bg.count { m.theme.bg[i] = v } })
+    private func stop(_ i: Int) -> Binding<Color> {
+        binding({ i < m.theme.bg.count ? m.theme.bg[i] : "000000" },
+                { v in if i < m.theme.bg.count { m.theme.bg[i] = v } })
+    }
+
+    private var angle: Binding<Double> {
+        Binding(get: { m.theme.angle }, set: { m.theme.angle = $0; m.theme.preset = "custom" })
     }
 
     var body: some View {
-        VStack(spacing: 16) {
-            VStack(spacing: 14) {
-                SectionTitle(icon: "sparkles", title: "Темы")
-                HStack(spacing: 10) {
-                    ForEach(Theme.presets, id: \.id) { p in
-                        VStack(spacing: 6) {
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .fill(LinearGradient(colors: p.theme.bg.map { Color(hex: $0) },
-                                                     startPoint: .topLeading, endPoint: .bottomTrailing))
-                                .frame(height: 62)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                        .strokeBorder(m.theme.preset == p.id ? m.accent : .white.opacity(0.25),
-                                                      lineWidth: m.theme.preset == p.id ? 2.5 : 1)
-                                )
-                                .scaleEffect(m.theme.preset == p.id ? 1.05 : 1)
-                            Text(p.name).font(m.font(12, bold: m.theme.preset == p.id))
-                        }
-                        .onTapGesture {
-                            withAnimation(.easeInOut(duration: 0.5)) { m.apply(preset: p.id) }
-                        }
+        ScreenTitle("Оформление")
+        VStack(spacing: 10) {
+            SectionLabel("Готовые")
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                ForEach(Theme.presets, id: \.id) { p in
+                    let on = m.theme.preset == p.id
+                    VStack(spacing: 5) {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(p.theme.gradient)
+                            .frame(height: 46)
+                        Text(p.name).font(m.font(11.5, bold: on))
                     }
+                    .padding(5)
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(on ? m.accent : m.stroke, lineWidth: on ? 2 : 1))
+                    .contentShape(Rectangle())
+                    .onTapGesture { m.apply(preset: p.id) }
                 }
             }
-            .glass()
-            .appear(0)
+        }
+        .glass()
+        .appear(0)
 
-            VStack(spacing: 12) {
-                SectionTitle(icon: "paintpalette", title: "Палитра")
-                ColorPicker("Акцент", selection: colorBinding({ m.theme.accent }, { m.theme.accent = $0 }), supportsOpacity: false)
-                ColorPicker("Текст", selection: colorBinding({ m.theme.text }, { m.theme.text = $0 }), supportsOpacity: false)
-                ColorPicker("Фон — основа", selection: bgBinding(0), supportsOpacity: false)
-                ColorPicker("Фон — перелив 1", selection: bgBinding(1), supportsOpacity: false)
-                ColorPicker("Фон — перелив 2", selection: bgBinding(2), supportsOpacity: false)
-                ToggleRow(title: "Анимация фона", isOn: $m.theme.animated)
-                if m.theme.animated {
-                    SliderRow(title: "Скорость анимации", value: $m.theme.speed, range: 0.2...3, step: 0.1, decimals: 1)
+        VStack(spacing: 10) {
+            SectionLabel("Градиент")
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(LinearGradient(colors: m.theme.bg.map { Color(hex: $0) }, startPoint: .leading, endPoint: .trailing))
+                .frame(height: 36)
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(m.stroke, lineWidth: 1))
+            HStack(spacing: 10) {
+                RowTitle(title: "Цвета")
+                ForEach(0..<3, id: \.self) { i in
+                    ColorPicker("", selection: stop(i), supportsOpacity: false).labelsHidden()
                 }
             }
-            .font(m.font(15))
-            .glass()
-            .appear(1)
+            RowLine()
+            SliderRow(title: "Угол", value: angle, range: 0...360, unit: "°")
+            RowLine()
+            ToggleRow(title: "Переливы", subtitle: "Плавная анимация фона", isOn: $m.theme.animated)
+            if m.theme.animated {
+                SliderRow(title: "Скорость переливов", value: $m.theme.speed, range: 0.2...3, step: 0.1, decimals: 1)
+            }
+        }
+        .glass()
+        .appear(1)
 
-            VStack(spacing: 12) {
-                SectionTitle(icon: "photo", title: "Свой фон")
-                HStack(spacing: 10) {
-                    PhotosPicker(selection: $photo, matching: .images) {
-                        Label("Выбрать фото", systemImage: "photo.on.rectangle")
-                    }
-                    .buttonStyle(GlassButton(prominent: true))
-                    if m.bgImage != nil {
-                        Button { m.setBackground(nil) } label: { Label("Убрать", systemImage: "xmark") }
-                            .buttonStyle(GlassButton())
-                    }
+        VStack(spacing: 10) {
+            SectionLabel("Палитра")
+            HStack {
+                RowTitle(title: "Акцент", subtitle: "Кнопки, переключатели, выделение")
+                ColorPicker("", selection: binding({ m.theme.accent }, { m.theme.accent = $0 }), supportsOpacity: false).labelsHidden()
+            }
+            RowLine()
+            HStack {
+                RowTitle(title: "Текст")
+                ColorPicker("", selection: binding({ m.theme.text }, { m.theme.text = $0 }), supportsOpacity: false).labelsHidden()
+            }
+        }
+        .glass()
+        .appear(2)
+
+        VStack(spacing: 10) {
+            SectionLabel("Свой фон")
+            HStack(spacing: 8) {
+                PhotosPicker(selection: $photo, matching: .images) {
+                    Label("Из галереи", systemImage: "photo")
                 }
+                .buttonStyle(GlassButton(prominent: true))
                 if m.bgImage != nil {
-                    ToggleRow(title: "Показывать фото", isOn: $m.theme.useImage)
-                    SliderRow(title: "Размытие", value: $m.theme.blur, range: 0...40)
-                    SliderRow(title: "Затемнение", value: $m.theme.dim, range: 0...0.8, step: 0.05, decimals: 2)
+                    Button { m.setBackground(nil) } label: { Text("Убрать") }
+                        .buttonStyle(GlassButton())
                 }
             }
-            .glass()
-            .appear(2)
-            .onChange(of: photo) { item in
-                guard let item = item else { return }
-                Task {
-                    if let data = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: data) {
-                        let small = StyleTab.downscale(img, max: 1600)
-                        await MainActor.run { m.setBackground(small) }
-                    }
-                }
+            if m.bgImage != nil {
+                ToggleRow(title: "Показывать фото", isOn: $m.theme.useImage)
+                RowLine()
+                SliderRow(title: "Размытие", value: $m.theme.blur, range: 0...40)
+                SliderRow(title: "Затемнение", value: $m.theme.dim, range: 0...0.8, step: 0.05, decimals: 2)
             }
-
-            VStack(spacing: 12) {
-                SectionTitle(icon: "textformat", title: "Шрифты")
-                fontMenu("Основной (Samsung)", selection: $m.theme.fontRegular)
-                fontMenu("Жирный (Samsung Bold)", selection: $m.theme.fontBold)
-                ForEach(m.fonts) { f in
-                    HStack {
-                        Text(f.name).font(.custom(f.name, size: 15))
-                        Spacer()
-                        Button { m.deleteFont(f) } label: { Image(systemName: "trash") }
-                    }
+        }
+        .glass()
+        .appear(3)
+        .onChange(of: photo) { item in
+            guard let item = item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: data) {
+                    let small = LookPage.downscale(img, max: 1600)
+                    await MainActor.run { m.setBackground(small) }
                 }
-                Button { importing = true } label: { Label("Добавить шрифт (.ttf / .otf)", systemImage: "plus") }
-                    .buttonStyle(GlassButton())
-                Text("Файлы Samsung Sharp Sans / SamsungOne подхватятся автоматически как основной и жирный.")
-                    .font(m.font(12)).opacity(0.6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .glass()
-            .appear(3)
-            .fileImporter(isPresented: $importing, allowedContentTypes: [.font, .data], allowsMultipleSelection: true) { result in
-                if case .success(let urls) = result { m.importFonts(urls) }
             }
         }
     }
 
-    private func fontMenu(_ title: String, selection: Binding<String>) -> some View {
+    static func downscale(_ img: UIImage, max side: CGFloat) -> UIImage {
+        let longest = Swift.max(img.size.width, img.size.height)
+        guard longest > side else { return img }
+        let k = side / longest
+        let size = CGSize(width: img.size.width * k, height: img.size.height * k)
+        return UIGraphicsImageRenderer(size: size).image { _ in img.draw(in: CGRect(origin: .zero, size: size)) }
+    }
+}
+
+struct FontsPage: View {
+    @EnvironmentObject var m: AppModel
+    @State private var importing = false
+
+    private func menu(_ title: String, _ selection: Binding<String>) -> some View {
         HStack {
-            Text(title).font(m.font(15))
-            Spacer()
+            RowTitle(title: title)
             Menu {
                 Button("Системный") { selection.wrappedValue = "" }
                 ForEach(m.fonts) { f in
@@ -512,82 +527,144 @@ struct StyleTab: View {
             } label: {
                 HStack(spacing: 4) {
                     Text(selection.wrappedValue.isEmpty ? "Системный" : selection.wrappedValue)
-                        .font(m.font(14, bold: true))
-                        .lineLimit(1)
+                        .font(m.font(14, bold: true)).lineLimit(1)
                     Image(systemName: "chevron.up.chevron.down").font(.system(size: 11))
                 }
-                .foregroundColor(m.accent)
+                .foregroundColor(m.textColor)
             }
         }
     }
 
-    static func downscale(_ img: UIImage, max side: CGFloat) -> UIImage {
-        let m = Swift.max(img.size.width, img.size.height)
-        guard m > side else { return img }
-        let k = side / m
-        let size = CGSize(width: img.size.width * k, height: img.size.height * k)
-        return UIGraphicsImageRenderer(size: size).image { _ in img.draw(in: CGRect(origin: .zero, size: size)) }
+    var body: some View {
+        ScreenTitle("Шрифты")
+        VStack(spacing: 10) {
+            SectionLabel("Шрифт приложения")
+            menu("Основной (Samsung)", $m.theme.fontRegular)
+            RowLine()
+            menu("Жирный (Samsung Bold)", $m.theme.fontBold)
+        }
+        .glass()
+        .appear(0)
+
+        VStack(spacing: 10) {
+            SectionLabel("Добавленные")
+            if m.fonts.isEmpty {
+                Text("Пока пусто. Добавьте файлы .ttf или .otf — шрифты Samsung подхватятся автоматически как основной и жирный.")
+                    .font(m.font(12.5)).opacity(0.56)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            ForEach(m.fonts) { f in
+                HStack {
+                    Text(f.name).font(.custom(f.name, size: 15))
+                    Spacer()
+                    Button { m.deleteFont(f) } label: { Image(systemName: "trash") }
+                        .buttonStyle(.plain)
+                }
+            }
+            Button { importing = true } label: { Label("Добавить шрифт", systemImage: "plus") }
+                .buttonStyle(GlassButton())
+        }
+        .glass()
+        .appear(1)
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.font, .data], allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result { m.importFonts(urls) }
+        }
     }
 }
 
-// MARK: - Help
+struct KeyboardPage: View {
+    @EnvironmentObject var m: AppModel
 
-struct HelpTab: View {
+    var body: some View {
+        ScreenTitle("Клавиатура")
+        VStack(spacing: 10) {
+            SectionLabel("Вид")
+            Segments(items: ["iOS", "Тёмная", "Светлая", "Material"], selection: $m.settings.skin)
+            ToggleRow(title: "Показывать нажатия", subtitle: "Клавиши подсвечиваются, как от пальца",
+                      isOn: $m.settings.showTaps)
+            RowLine()
+            ToggleRow(title: "Звук клавиш", isOn: $m.settings.clickSound)
+            RowLine()
+            ToggleRow(title: "Вибрация", subtitle: "Нужен «Полный доступ»", isOn: $m.settings.haptics)
+        }
+        .glass()
+        .appear(0)
+
+        VStack(spacing: 10) {
+            SectionLabel("Поведение")
+            ToggleRow(title: "Пауза при касании", subtitle: "Любое касание клавиатуры ставит печать на паузу",
+                      isOn: $m.settings.pauseOnTouch)
+        }
+        .glass()
+        .appear(1)
+
+        VStack(spacing: 10) {
+            SectionLabel("Перенос строки")
+            Segments(items: ["Ввод", "Пробел", "Пропуск"], selection: $m.settings.newlineMode)
+            Text("В мессенджерах «Ввод» может отправить сообщение — тогда выберите пробел.")
+                .font(m.font(12.5)).opacity(0.56)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .glass()
+        .appear(2)
+    }
+}
+
+struct HelpPage: View {
     @EnvironmentObject var m: AppModel
     @State private var test = ""
 
     private func row(_ n: String, _ text: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 11) {
             Text(n)
-                .font(m.font(14, bold: true))
-                .foregroundColor(m.accent.isLight ? .black : .white)
-                .frame(width: 26, height: 26)
+                .font(m.font(13, bold: true))
+                .foregroundColor(m.onAccent)
+                .frame(width: 24, height: 24)
                 .background(Circle().fill(m.accent))
             Text(text).font(m.font(14)).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     var body: some View {
-        VStack(spacing: 16) {
-            VStack(spacing: 12) {
-                SectionTitle(icon: "gearshape", title: "Установка клавиатуры")
-                row("1", "Настройки → Основные → Клавиатура → Клавиатуры → Новые клавиатуры → AutoTyper.")
-                row("2", "Откройте её в списке и включите «Полный доступ» — нужен для буфера обмена и вибрации.")
-                row("3", "В любом поле ввода удерживайте 🌐 и выберите клавиатуру AutoTyper.")
-                Button {
-                    if let u = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(u) }
-                } label: { Label("Открыть настройки", systemImage: "arrow.up.forward.app") }
-                    .buttonStyle(GlassButton(prominent: true))
-                HStack(spacing: 8) {
-                    Circle().fill(m.store.isShared ? Color.green : Color.orange).frame(width: 9, height: 9)
-                    Text(m.store.isShared ? "Связь приложения и клавиатуры работает" : "Связь недоступна — текст передаётся через буфер")
-                        .font(m.font(12)).opacity(0.75)
-                    Spacer()
-                }
+        ScreenTitle("Установка")
+        VStack(spacing: 12) {
+            SectionLabel("Клавиатура")
+            row("1", "Настройки → Основные → Клавиатура → Клавиатуры → Новые клавиатуры → AutoTyper.")
+            row("2", "Откройте её в списке и включите «Полный доступ» — нужен для буфера обмена и вибрации.")
+            row("3", "В любом поле ввода удерживайте кнопку с глобусом и выберите AutoTyper.")
+            Button {
+                if let u = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(u) }
+            } label: { Label("Открыть настройки", systemImage: "arrow.up.forward.app") }
+                .buttonStyle(GlassButton(prominent: true))
+            HStack(spacing: 8) {
+                Circle().fill(m.store.isShared ? Color.green : Color.orange).frame(width: 8, height: 8)
+                Text(m.store.isShared ? "Связь приложения и клавиатуры работает" : "Связь недоступна — текст передаётся через буфер")
+                    .font(m.font(12.5)).opacity(0.7)
+                Spacer()
             }
-            .glass()
-            .appear(0)
-
-            VStack(spacing: 12) {
-                SectionTitle(icon: "hand.tap", title: "Скрытое управление")
-                row("•", "Удерживать пробел — старт, пауза или продолжение с места остановки.")
-                row("•", "Любое касание клавиатуры во время печати — мгновенная пауза.")
-                row("•", "Удерживать «123» — показать или скрыть панель: пауза, полный стоп, вставка из буфера, скорость.")
-                row("•", "Удерживать 🌐 — переключиться на другую клавиатуру.")
-            }
-            .glass()
-            .appear(1)
-
-            VStack(spacing: 12) {
-                SectionTitle(icon: "pencil.line", title: "Проверка")
-                TextField("Коснитесь и выберите клавиатуру AutoTyper", text: $test, axis: .vertical)
-                    .font(m.font(15))
-                    .lineLimit(3...8)
-                    .padding(12)
-                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            }
-            .glass()
-            .appear(2)
         }
+        .glass()
+        .appear(0)
+
+        VStack(spacing: 12) {
+            SectionLabel("Скрытое управление")
+            row("1", "Удерживать пробел — старт, пауза или продолжение с места остановки.")
+            row("2", "Любое касание клавиатуры во время печати — мгновенная пауза.")
+            row("3", "Удерживать «123» — панель: пауза, полный стоп, вставка из буфера, скорость.")
+            row("4", "Удерживать глобус — переключиться на другую клавиатуру.")
+        }
+        .glass()
+        .appear(1)
+
+        VStack(spacing: 10) {
+            SectionLabel("Проверка")
+            TextField("Коснитесь и выберите клавиатуру AutoTyper", text: $test, axis: .vertical)
+                .font(m.font(15))
+                .lineLimit(3...8)
+                .padding(11)
+                .background(m.field, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .glass()
+        .appear(2)
     }
 }

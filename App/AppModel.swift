@@ -7,8 +7,9 @@ import CoreText
 struct Theme: Codable, Equatable {
     var preset = "mono"
     var accent = "FFFFFF"
-    var bg = ["000000", "FFFFFF", "7A7A80"]
-    var text = "FFFFFF"
+    var bg = ["050505", "3A3A3F", "0E0E10"]      // gradient stops
+    var text = "F5F5F7"
+    var angle = 160.0                             // gradient angle, degrees
     var animated = true
     var speed = 1.0
     var useImage = false
@@ -19,10 +20,22 @@ struct Theme: Codable, Equatable {
 
     static let presets: [(id: String, name: String, theme: Theme)] = [
         ("mono", "Моно", Theme()),
-        ("aurora", "Аврора", Theme(preset: "aurora", accent: "7DF9FF", bg: ["0B1026", "5B2A86", "1FA2A6"])),
-        ("sunset", "Закат", Theme(preset: "sunset", accent: "FFD27D", bg: ["1A0B1E", "FF5E62", "FF9966"])),
-        ("ocean", "Океан", Theme(preset: "ocean", accent: "00FFCA", bg: ["021B2B", "0A4D68", "05BFDB"]))
+        ("graphite", "Графит", Theme(preset: "graphite", accent: "C8D0DA", bg: ["15171B", "2B3038", "0C0D10"], text: "F1F3F6", angle: 200)),
+        ("aurora", "Аврора", Theme(preset: "aurora", accent: "8EE6E0", bg: ["0A0F24", "3B2A6E", "0F5A63"], text: "F2F6FF", angle: 150)),
+        ("dusk", "Закат", Theme(preset: "dusk", accent: "FFB38A", bg: ["190D1C", "7A2F45", "C4603F"], text: "FFF5EF", angle: 170)),
+        ("deep", "Глубина", Theme(preset: "deep", accent: "5FD4FF", bg: ["03121F", "0B3A57", "06202F"], text: "EEF8FF", angle: 180)),
+        ("pearl", "Жемчуг", Theme(preset: "pearl", accent: "16161A", bg: ["F4F4F6", "D9DCE3", "ECEEF2"], text: "16161A", angle: 150))
     ]
+
+    var name: String { Theme.presets.first(where: { $0.id == preset })?.name ?? "Своё" }
+
+    var gradient: LinearGradient {
+        let a = angle * .pi / 180
+        let dx = sin(a) / 2, dy = -cos(a) / 2
+        return LinearGradient(colors: bg.map { Color(hex: $0) },
+                              startPoint: UnitPoint(x: 0.5 - dx, y: 0.5 - dy),
+                              endPoint: UnitPoint(x: 0.5 + dx, y: 0.5 + dy))
+    }
 }
 
 extension Color {
@@ -100,7 +113,14 @@ final class AppModel: ObservableObject {
     // MARK: Theme helpers
 
     var accent: Color { Color(hex: theme.accent) }
+    var onAccent: Color { accent.isLight ? Color(hex: "0B0B0D") : .white }
     var textColor: Color { Color(hex: theme.text) }
+    var isLight: Bool {
+        if theme.useImage && bgImage != nil { return false }
+        return Color(hex: theme.bg.first ?? "000000").isLight
+    }
+    var stroke: Color { isLight ? .black.opacity(0.10) : .white.opacity(0.14) }
+    var field: Color { isLight ? .black.opacity(0.05) : .white.opacity(0.07) }
 
     func font(_ size: CGFloat, bold: Bool = false) -> Font {
         let name = bold ? theme.fontBold : theme.fontRegular
@@ -115,7 +135,7 @@ final class AppModel: ObservableObject {
         var t = p.theme
         t.fontRegular = theme.fontRegular
         t.fontBold = theme.fontBold
-        t.useImage = theme.useImage
+        t.useImage = false
         t.blur = theme.blur
         t.dim = theme.dim
         t.animated = theme.animated
