@@ -19,6 +19,7 @@ struct LinkReport: Codable {
 
 enum LocalLink {
     static let port: UInt16 = 47823
+    static let clipType = "com.werx.autotyper.payload"
 
     static func encode<T: Encodable>(_ v: T) -> Data {
         let e = JSONEncoder()

@@ -34,13 +34,16 @@ struct Skin {
                        shadow: .clear, backdrop: UIColor(red: 0.93, green: 0.94, blue: 0.95, alpha: 1), radius: 7)
         }
         if id != 4 {
+            // Matched to the stock Russian keyboard.
             return dark
-                ? Skin(key: UIColor(white: 1, alpha: 0.20), special: UIColor(white: 1, alpha: 0.09), text: .white,
-                       pressed: UIColor(white: 1, alpha: 0.40), popup: UIColor(white: 0.40, alpha: 1),
-                       shadow: .clear, backdrop: touchable, radius: 9, modern: true)
-                : Skin(key: .white, special: UIColor(red: 0.62, green: 0.65, blue: 0.70, alpha: 0.45), text: .black,
-                       pressed: UIColor(white: 0.80, alpha: 1), popup: .white,
-                       shadow: UIColor(white: 0, alpha: 0.16), backdrop: touchable, radius: 9, modern: true)
+                ? Skin(key: UIColor(red: 0.35, green: 0.35, blue: 0.37, alpha: 1),
+                       special: UIColor(red: 0.23, green: 0.23, blue: 0.25, alpha: 1), text: .white,
+                       pressed: UIColor(red: 0.23, green: 0.23, blue: 0.25, alpha: 1),
+                       popup: UIColor(red: 0.42, green: 0.42, blue: 0.44, alpha: 1),
+                       shadow: UIColor(white: 0, alpha: 0.45), backdrop: touchable, radius: 5.5, modern: true)
+                : Skin(key: .white, special: UIColor(red: 0.67, green: 0.69, blue: 0.73, alpha: 1), text: .black,
+                       pressed: UIColor(red: 0.67, green: 0.69, blue: 0.73, alpha: 1), popup: .white,
+                       shadow: UIColor(red: 0.53, green: 0.54, blue: 0.56, alpha: 1), backdrop: touchable, radius: 5.5, modern: true)
         }
         return dark
             ? Skin(key: UIColor(white: 0.42, alpha: 1), special: UIColor(white: 0.27, alpha: 1), text: .white,
@@ -86,9 +89,14 @@ private final class KeyCap: UIView {
             } else {
                 let lower = spec.label.lowercased() == spec.label && spec.label.uppercased() != spec.label
                 label.font = skin.modern
-                    ? .systemFont(ofSize: lower ? 25 : 23, weight: .regular)
+                    ? .systemFont(ofSize: lower ? 24 : 22, weight: .medium)
                     : .systemFont(ofSize: lower ? 24 : 22.5, weight: .light)
             }
+        }
+        if spec.id == "space" && skin.modern {
+            label.font = .systemFont(ofSize: 11, weight: .medium)
+            label.textAlignment = .right
+            label.alpha = 0.45
         }
         setPressed(false)
     }
@@ -102,6 +110,9 @@ private final class KeyCap: UIView {
             label.frame.origin.y -= 1.5
         }
         image.frame = bounds
+        if spec.id == "space" && skin.modern {
+            label.frame = CGRect(x: 0, y: bounds.height - 18, width: bounds.width - 8, height: 14)
+        }
     }
 
     func setPressed(_ on: Bool) {
@@ -223,8 +234,8 @@ final class KeyboardView: UIView {
         }
         let abc = lang == .ru ? "АБВ" : "ABC"
         out.append(KeySpec(id: "mode", label: page == .letters ? "123" : abc, icon: nil, x: 0, w: 0.125, row: 3, special: true))
-        out.append(KeySpec(id: "globe", label: "", icon: "globe", x: 0.125, w: 0.125, row: 3, special: true))
-        let spaceLabel = skin.modern ? "" : (lang == .ru ? "Пробел" : "space")
+        out.append(KeySpec(id: "emoji", label: "", icon: skin.modern ? "face.smiling" : "globe", x: 0.125, w: 0.125, row: 3, special: true))
+        let spaceLabel = skin.modern ? (lang == .ru ? "ру" : "en") : (lang == .ru ? "Пробел" : "space")
         out.append(KeySpec(id: "space", label: spaceLabel, icon: nil, x: 0.25, w: 0.5, row: 3, special: false))
         out.append(KeySpec(id: "return", label: lang == .ru ? "Ввод" : "return", icon: skin.modern ? "return" : nil,
                            x: 0.75, w: 0.25, row: 3, special: true))
@@ -314,7 +325,7 @@ final class KeyboardView: UIView {
                         self?.onKey?(spec)
                     }
                 }
-            } else if id == "space" || id == "mode" || id == "globe" {
+            } else if id == "space" || id == "mode" || id == "emoji" {
                 longTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
                     self?.longFired = true
                     self?.onLongPress?(id)

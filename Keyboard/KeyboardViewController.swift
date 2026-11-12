@@ -24,6 +24,9 @@ final class KeyboardViewController: UIInputViewController {
     private var skinKey = -1
     private let link = LinkClient()
     private var ticks = 0
+    private var clipCount = -1
+    private var notice = ""
+    private var noticeUntil = Date.distantPast
     private var run: RunStat?
     private var runStart = 0
     private let haptic = UIImpactFeedbackGenerator(style: .light)
@@ -146,8 +149,43 @@ final class KeyboardViewController: UIInputViewController {
         refreshPanel()
     }
 
+    /// Opens the panel with a message, so a failed start never looks like nothing happened.
+    private func fail(_ message: String) {
+        notice = message
+        noticeUntil = Date().addingTimeInterval(6)
+        panelVisible = true
+        panel.isHidden = false
+        info.text = message
+    }
+
+    private func applyPayload(_ p: LinkPayload) {
+        store.settings = p.settings
+        if p.text != store.text { store.text = p.text }
+        if let c = p.command { store.command = c }
+        settings = p.settings
+        engine?.settings = p.settings
+        applySkin()
+        refreshPanel()
+    }
+
+    /// Last-resort channel: the app leaves its payload on the system clipboard at start.
+    private func checkClipboard() {
+        let pb = UIPasteboard.general
+        guard pb.changeCount != clipCount else { return }
+        clipCount = pb.changeCount
+        guard pb.contains(pasteboardTypes: [LocalLink.clipType]),
+              let d = pb.data(forPasteboardType: LocalLink.clipType),
+              let p = try? JSONDecoder().decode(LinkPayload.self, from: d) else { return }
+        Store.linkSeen = true
+        applyPayload(p)
+    }
+
     private func refreshPanel() {
         guard panelVisible else { return }
+        if Date() < noticeUntil {
+            info.text = notice
+            return
+        }
         let names = ["idle": "Готов", "armed": "Отсчёт", "running": "Печать", "paused": "Пауза", "done": "Готово"]
         let total = engine?.total ?? store.text.count
         let speed = settings.wpmMode == 0
@@ -203,16 +241,8 @@ final class KeyboardViewController: UIInputViewController {
     private func tick() {
         ticks += 1
         if !store.isShared && hasFullAccess && ticks % 4 == 1 {
-            link.sync(LinkReport(status: status, stats: store.stats)) { [weak self] p in
-                guard let self = self else { return }
-                self.store.settings = p.settings
-                if p.text != self.store.text { self.store.text = p.text }
-                if let c = p.command { self.store.command = c }
-                self.settings = p.settings
-                self.engine?.settings = p.settings
-                self.applySkin()
-                self.refreshPanel()
-            }
+            link.sync(LinkReport(status: status, stats: store.stats)) { [weak self] p in self?.applyPayload(p) }
+            checkClipboard()
         }
         if let cmd = store.command, cmd.id != status.lastCmd {
             status.lastCmd = cmd.id
@@ -264,11 +294,18 @@ final class KeyboardViewController: UIInputViewController {
     private func begin() {
         settings = store.settings
         if engine == nil {
+            if store.text.isEmpty && !store.isShared && hasFullAccess {
+                checkClipboard()
+                if store.text.isEmpty, let clip = UIPasteboard.general.string, !clip.isEmpty { store.text = clip }
+            }
             let text = store.text
             if status.pos >= text.count { status.pos = 0 }
             guard !text.isEmpty else {
                 status.state = "idle"
                 saveStatus()
+                fail(hasFullAccess
+                     ? "Нет текста: скопируйте его и нажмите кнопку буфера"
+                     : "Включите «Полный доступ» для Mercury")
                 return
             }
             pendingStep = nil
@@ -390,7 +427,7 @@ final class KeyboardViewController: UIInputViewController {
             panelVisible.toggle()
             panel.isHidden = !panelVisible
             refreshPanel()
-        case "globe": advanceToNextInputMode()
+        case "emoji": advanceToNextInputMode()
         default: break
         }
     }
@@ -404,7 +441,7 @@ final class KeyboardViewController: UIInputViewController {
         case "delete": proxy.deleteBackward(); typed = true
         case "mode": page = page == .letters ? .numbers : .letters
         case "alt": page = page == .numbers ? .symbols : .numbers
-        case "globe": lang = lang == .ru ? .en : .ru
+        case "emoji": lang = lang == .ru ? .en : .ru
         case "space":
             proxy.insertText(" ")
             page = .letters

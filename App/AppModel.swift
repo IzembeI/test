@@ -186,6 +186,11 @@ final class AppModel: ObservableObject {
         let cmd = TyperCommand(action: action, fireAt: Date().timeIntervalSince1970 + delay)
         store.command = cmd
         lastCommand = cmd
+        if !store.isShared && (action == "start" || action == "resume") {
+            // Fallback for signings without a shared container: hand the payload over on the clipboard.
+            let payload = LocalLink.encode(LinkPayload(settings: settings, text: text, command: cmd))
+            UIPasteboard.general.setItems([["public.utf8-plain-text": text, LocalLink.clipType: payload]], options: [:])
+        }
     }
 
     /// The keyboard has not picked up the last command yet.
