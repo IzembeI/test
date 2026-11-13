@@ -342,10 +342,12 @@ final class TypingEngine {
         if c == ".", page == .letters, i > 0, i + 1 < chars.count,
            chars[i + 1] == " ", isLetter(chars[i - 1]), rnd() < 0.7 {
             let d1 = keyDelay(to: KeyGeo.spacePos)
-            push(.insert(" "), hl: "space", delay: d1)
+            // The first tap only shows the key; the text changes in one step, so a pause or an
+            // engine rebuild between the two taps cannot leave a stray space behind.
+            push(.none, hl: "space", delay: d1)
             i += 2; commit(2)
             refreshShift(at: i)
-            push(.dotShortcut, hl: "space", delay: max(0.05, base * uni(0.45, 0.7)))
+            push(.insert(". "), hl: "space", delay: max(0.05, base * uni(0.45, 0.7)))
             afterPause(".")
             return
         }

@@ -19,6 +19,9 @@ struct LinkReport: Codable {
 
 enum LocalLink {
     static let port: UInt16 = 47823
+    /// Sent by the keyboard with every request; the app ignores requests without it.
+    static let keyHeader = "x-mercury-key"
+    static let key = "b7f2c91e5a4d4c0f9e3a6d18c2775b40"
     static let clipType = "com.werx.autotyper.payload"
 
     static func encode<T: Encodable>(_ v: T) -> Data {
@@ -59,12 +62,20 @@ final class LinkServer {
             var b = buffer
             if let d = data { b.append(d) }
             if let body = self.body(of: b) {
-                self.respond(c, body)
+                if self.authorized(b) { self.respond(c, body) } else { c.cancel() }
             } else if done || error != nil || b.count > 4_000_000 {
                 c.cancel()
             } else {
                 self.read(c, b)
             }
+        }
+    }
+
+    private func authorized(_ b: Data) -> Bool {
+        guard let sep = b.range(of: Data("\r\n\r\n".utf8)) else { return false }
+        let head = String(decoding: b[..<sep.lowerBound], as: UTF8.self).lowercased()
+        return head.components(separatedBy: "\r\n").contains { line in
+            line.hasPrefix(LocalLink.keyHeader + ":") && line.hasSuffix(LocalLink.key)
         }
     }
 
@@ -114,6 +125,7 @@ final class LinkClient {
         busy = true
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
+        req.setValue(LocalLink.key, forHTTPHeaderField: LocalLink.keyHeader)
         req.httpBody = LocalLink.encode(report)
         session.dataTask(with: req) { [weak self] data, _, _ in
             DispatchQueue.main.async {
