@@ -144,7 +144,10 @@ final class Store {
 
     /// True when the other side is reachable: shared container, or data arriving over the bridge.
     static var linkSeen = false
-    var linked: Bool { isShared || Store.linkSeen || (inBoard?.numberOfItems ?? 0) > 0 }
+    private static let launched = Date().timeIntervalSince1970
+    /// The pasteboard outlives launches and reinstalls, so only a status written since this
+    /// launch counts as a sign of life.
+    var linked: Bool { isShared || Store.linkSeen || status.updated >= Store.launched }
 
     func readData(_ name: String) -> Data? {
         if !isShared, theirs.contains(name), let pb = inBoard {

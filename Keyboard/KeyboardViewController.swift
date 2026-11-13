@@ -31,8 +31,12 @@ final class KeyboardViewController: UIInputViewController {
     private var notice = ""
     private var noticeUntil = Date.distantPast
     private var run: RunStat?
+    private var pendingLayout: (KBLang, KBPage, Int)?
     private var runStart = 0
     private let haptic = UIImpactFeedbackGenerator(style: .light)
+
+    /// How long after its fire time a pending start is still honoured, in seconds.
+    private static let startWindow = 120.0
 
     // MARK: Lifecycle
 
@@ -255,7 +259,7 @@ final class KeyboardViewController: UIInputViewController {
         }
         if let cmd = store.command, cmd.id != status.lastCmd {
             status.lastCmd = cmd.id
-            if Date().timeIntervalSince1970 - cmd.created < 900 {
+            if Date().timeIntervalSince1970 - cmd.fireAt < KeyboardViewController.startWindow {
                 switch cmd.action {
                 case "start": start(at: cmd.fireAt, reset: true)
                 case "resume": start(at: cmd.fireAt, reset: false)
@@ -267,6 +271,13 @@ final class KeyboardViewController: UIInputViewController {
         }
         if status.state == "armed" {
             let now = Date()
+            if now.timeIntervalSince1970 - status.fireAt > KeyboardViewController.startWindow {
+                // The start was requested long ago and never happened: drop it instead of
+                // typing into whatever field the keyboard is opened in next.
+                status.state = status.pos > 0 ? "paused" : "idle"
+                saveStatus()
+                return
+            }
             // If the keyboard was opened after the timer ran out, give it a moment to settle.
             if now.timeIntervalSince1970 >= status.fireAt && now.timeIntervalSince(appearedAt) > 0.7 {
                 begin()
@@ -387,6 +398,11 @@ final class KeyboardViewController: UIInputViewController {
     private func exec(_ step: TypeStep) {
         guard status.state == "running" else { return }
         pendingStep = nil
+        if let (l, p, s) = pendingLayout {
+            // The previous step's layout change must be in place before this key is shown.
+            pendingLayout = nil
+            kb.set(lang: l, page: p, shift: s)
+        }
         let proxy = textDocumentProxy
         switch step.action {
         case .insert(let s): proxy.insertText(s)
@@ -414,15 +430,19 @@ final class KeyboardViewController: UIInputViewController {
             // Let the pressed key stay visible for a moment before the layout changes.
             let (l, p, s) = (step.lang, step.page, step.shift)
             if l != kb.lang || p != kb.page {
+                pendingLayout = (l, p, s)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                    guard let self = self, self.status.state == "running" else { return }
+                    guard let self = self, let (l, p, s) = self.pendingLayout else { return }
+                    self.pendingLayout = nil
                     self.kb.set(lang: l, page: p, shift: s)
                 }
             } else {
                 kb.set(lang: l, page: p, shift: s)
             }
         }
-        updateSuggestions()
+        // Spell-checking every keystroke would delay the next one; refresh at word ends and
+        // every few keys instead.
+        if case .insert(let s) = step.action, s == " " || stepCount % 4 == 0 { updateSuggestions() }
         status.pos = step.pos
         stepCount += 1
         if stepCount % 8 == 0 { saveStatus() }
@@ -479,6 +499,10 @@ final class KeyboardViewController: UIInputViewController {
 
     @objc private func suggestionTapped(_ sender: UIButton) {
         guard let title = sender.title(for: .normal), !title.isEmpty else { return }
+        if status.state == "running" {
+            pause()
+            return
+        }
         let proxy = textDocumentProxy
         if sender.tag == 0 {
             proxy.insertText(" ")
