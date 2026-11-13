@@ -9,6 +9,9 @@ final class KeyboardViewController: UIInputViewController {
     private let kb = KeyboardView()
     private let panel = UIStackView()
     private let info = UILabel()
+    private let suggest = UIStackView()
+    private let checker = UITextChecker()
+    private var suggestWord = ""
     private let playButton = UIButton(type: .system)
 
     private var settings = TyperSettings()
@@ -66,6 +69,7 @@ final class KeyboardViewController: UIInputViewController {
             return true
         }
         buildPanel()
+        buildSuggestions()
         updateAutoShift()
     }
 
@@ -94,6 +98,7 @@ final class KeyboardViewController: UIInputViewController {
         kb.topInset = landscape ? 32 : 44
         heightConstraint?.constant = landscape ? 192 : 260
         panel.frame = CGRect(x: 8, y: 2, width: view.bounds.width - 16, height: kb.topInset - 4)
+        suggest.frame = panel.frame
     }
 
     override func traitCollectionDidChange(_ previous: UITraitCollection?) {
@@ -104,6 +109,7 @@ final class KeyboardViewController: UIInputViewController {
     override func textDidChange(_ textInput: UITextInput?) {
         applySkin()
         if status.state != "running" { updateAutoShift() }
+        updateSuggestions()
     }
 
     private func applySkin() {
@@ -155,6 +161,7 @@ final class KeyboardViewController: UIInputViewController {
         noticeUntil = Date().addingTimeInterval(6)
         panelVisible = true
         panel.isHidden = false
+        suggest.isHidden = true
         info.text = message
     }
 
@@ -199,6 +206,8 @@ final class KeyboardViewController: UIInputViewController {
     @objc private func hidePanel() {
         panelVisible = false
         panel.isHidden = true
+        suggest.isHidden = false
+        updateSuggestions()
     }
 
     @objc private func toggleRun() {
@@ -413,10 +422,72 @@ final class KeyboardViewController: UIInputViewController {
                 kb.set(lang: l, page: p, shift: s)
             }
         }
+        updateSuggestions()
         status.pos = step.pos
         stepCount += 1
         if stepCount % 8 == 0 { saveStatus() }
         runNext()
+    }
+
+    // MARK: Suggestions bar
+
+    private func buildSuggestions() {
+        suggest.axis = .horizontal
+        suggest.distribution = .fillEqually
+        for i in 0..<3 {
+            let b = UIButton(type: .system)
+            b.tag = i
+            b.titleLabel?.font = .systemFont(ofSize: 17)
+            b.titleLabel?.lineBreakMode = .byTruncatingTail
+            b.addTarget(self, action: #selector(suggestionTapped(_:)), for: .touchUpInside)
+            suggest.addArrangedSubview(b)
+        }
+        view.addSubview(suggest)
+    }
+
+    /// Fills the bar above the keys the way the stock keyboard does: the word as typed,
+    /// then corrections and completions for it.
+    private func updateSuggestions() {
+        guard !panelVisible else { return }
+        let before = textDocumentProxy.documentContextBeforeInput ?? ""
+        let word = String(before.reversed().prefix(while: { $0.isLetter }).reversed())
+        suggestWord = word
+        var slots: [String] = []
+        if !word.isEmpty {
+            let lang = word.unicodeScalars.contains(where: { $0.value >= 0x400 && $0.value < 0x500 }) ? "ru_RU" : "en_US"
+            let ns = word as NSString
+            let range = NSRange(location: 0, length: ns.length)
+            var found: [String] = []
+            let miss = checker.rangeOfMisspelledWord(in: word, range: range, startingAt: 0, wrap: false, language: lang)
+            if miss.location != NSNotFound {
+                found += checker.guesses(forWordRange: range, in: word, language: lang) ?? []
+            }
+            found += checker.completions(forPartialWordRange: range, in: word, language: lang) ?? []
+            slots.append("«" + word + "»")
+            for f in found where f != word && !slots.contains(f) {
+                slots.append(f)
+                if slots.count == 3 { break }
+            }
+        }
+        for (i, v) in suggest.arrangedSubviews.enumerated() {
+            guard let b = v as? UIButton else { continue }
+            b.setTitle(i < slots.count ? slots[i] : "", for: .normal)
+            b.setTitleColor(kb.skin.text, for: .normal)
+            b.isEnabled = i < slots.count
+        }
+    }
+
+    @objc private func suggestionTapped(_ sender: UIButton) {
+        guard let title = sender.title(for: .normal), !title.isEmpty else { return }
+        let proxy = textDocumentProxy
+        if sender.tag == 0 {
+            proxy.insertText(" ")
+        } else {
+            for _ in 0..<suggestWord.count { proxy.deleteBackward() }
+            proxy.insertText(title + " ")
+        }
+        updateAutoShift()
+        updateSuggestions()
     }
 
     // MARK: Manual typing
@@ -427,6 +498,7 @@ final class KeyboardViewController: UIInputViewController {
         case "mode":
             panelVisible.toggle()
             panel.isHidden = !panelVisible
+            suggest.isHidden = panelVisible
             refreshPanel()
         case "emoji": advanceToNextInputMode()
         default: break
@@ -456,6 +528,7 @@ final class KeyboardViewController: UIInputViewController {
         if settings.clickSound { UIDevice.current.playInputClick() }
         kb.set(lang: lang, page: page, shift: shift)
         if typed && shift != 2 { updateAutoShift() }
+        updateSuggestions()
     }
 
     private func updateAutoShift() {
