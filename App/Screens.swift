@@ -127,14 +127,10 @@ struct ScreenTitle: View {
     init(_ title: String) { self.title = title }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title)
-                .font(m.font(28, bold: true))
-                .kerning(-0.5)
-            Spacer()
-            Text("сборка \(Store.build)").font(m.font(12)).opacity(0.45)
-        }
-        .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+        Text(title)
+            .font(m.font(28, bold: true))
+            .kerning(-0.5)
+            .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
     }
 }
 
