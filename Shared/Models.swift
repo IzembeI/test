@@ -62,6 +62,7 @@ struct TyperStatus: Codable, Equatable {
     var updated = 0.0
     var lastCmd = ""
     var fireAt = 0.0
+    var build = ""            // build number of the keyboard that wrote this status
 }
 
 // MARK: - File store (App Group container, with a local fallback)
@@ -121,6 +122,7 @@ final class Store {
     // other's files. They then talk through two named pasteboards (one per direction), which
     // iOS shares between an app and its extensions once the keyboard has Full Access.
 
+    static let build = (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "?"
     static let isKeyboard = Bundle.main.bundlePath.hasSuffix(".appex")
     private static let appFiles: Set<String> = ["settings.json", "text.txt", "command.json"]
     private static let keyboardFiles: Set<String> = ["status.json", "stats.json"]

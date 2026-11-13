@@ -21,7 +21,7 @@ jobs:
           set -o pipefail
           xcodebuild -project AutoTyper.xcodeproj -scheme AutoTyper -configuration Release \
             -sdk iphoneos -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build \
+            CURRENT_PROJECT_VERSION=$GITHUB_RUN_NUMBER CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build \
             | tee build.log | grep -E "error|BUILD (SUCCEEDED|FAILED)" || { tail -n 80 build.log; exit 1; }
           grep -q "BUILD SUCCEEDED" build.log
       - name: Package IPA

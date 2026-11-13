@@ -191,7 +191,7 @@ final class KeyboardViewController: UIInputViewController {
         let speed = settings.wpmMode == 0
             ? "\(Int(settings.wpm))"
             : "\(Int(settings.wpmMin))–\(Int(settings.wpmMax))"
-        info.text = "\(names[status.state] ?? "") \(status.pos)/\(total) · \(speed) впм"
+        info.text = "\(names[status.state] ?? "") \(status.pos)/\(total) · \(speed) впм · сб. \(Store.build)"
         let running = status.state == "running" || status.state == "armed"
         playButton.setImage(UIImage(systemName: running ? "pause.fill" : "play.fill"), for: .normal)
     }
@@ -267,6 +267,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private func saveStatus() {
         status.updated = Date().timeIntervalSince1970
+        status.build = Store.build
         store.status = status
         refreshPanel()
     }

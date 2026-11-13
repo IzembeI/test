@@ -840,6 +840,16 @@ struct HelpPage: View {
                     .font(m.font(12.5)).opacity(0.7)
                 Spacer()
             }
+            let kb = m.status.build
+            Text("Сборка приложения: \(Store.build) · сборка клавиатуры: \(kb.isEmpty ? "нет данных" : kb)")
+                .font(m.font(12.5, bold: true))
+                .foregroundColor(kb.isEmpty || kb == Store.build ? m.textColor : .orange)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if !kb.isEmpty && kb != Store.build {
+                Text("Клавиатура осталась от старой установки. Удалите её из списка клавиатур, удалите старые копии приложения, перезагрузите телефон и добавьте клавиатуру заново.")
+                    .font(m.font(12.5)).opacity(0.7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .glass()
         .appear(0)
