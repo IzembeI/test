@@ -12,6 +12,7 @@ type analysis struct {
 	Cellular int      `json:"cellular"` // 0..100: chance to work on mobile internet with whitelists
 	WiFi     int      `json:"wifi"`     // 0..100: expected quality on an open network
 	DPI      int      `json:"dpi"`      // 0..100: resistance to DPI blocking
+	RuSNI    bool     `json:"ruSni"`    // camouflaged as a Russian site: passes white lists by SNI
 	Traits   []string `json:"traits"`   // short labels
 	Notes    []string `json:"notes"`    // explanations in Russian
 }
@@ -219,6 +220,7 @@ func analyzeOutbound(ob map[string]any, deps []map[string]any, name string, rawC
 		switch {
 		case containsAny(sni, ruSNI):
 			cell += 35
+			a.RuSNI = true
 			trait("SNI " + sni)
 			note("Маскировка под российский сайт " + sni + " — такие обычно в «белых списках» мобильных операторов.")
 		case containsAny(sni, bigForeignSNI):

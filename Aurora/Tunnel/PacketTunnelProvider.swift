@@ -28,6 +28,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private var kindOverride: String?
     private var deadTicks = 0
     private var outageNoticed = false
+    private var overrideSince = Date.distantPast
+    private var returnDelay: TimeInterval = 600
+    private var lastUp: Int64?
+    private var lastDown: Int64?
+    private var stallTicks = 0
+    private var lastStallRestart = Date.distantPast
+    /// Path changes are acted on once the path holds for 3 s, so a flapping
+    /// Wi‑Fi does not restart the core (and cut push) on every blink.
+    private var pathWork: DispatchWorkItem?
 
     // MARK: Start
 
@@ -258,6 +267,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         // Changes while the tunnel is still starting are compared against
         // the first path once it is up.
         guard live else { return }
+        pathWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.pathSettled(path) }
+        pathWork = work
+        queue.asyncAfter(deadline: .now() + 3, execute: work)
+    }
+
+    private func pathSettled(_ path: Network.NWPath) {
+        let d = describe(path)
         defer { lastPath = d }
         guard let last = lastPath, last != d, let p = payload else { return }
         Log.write("network: \(last) -> \(d)")
@@ -276,6 +293,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             // A new network gets its own set again; the fallback was for the old one.
             kindOverride = nil
             deadTicks = 0
+            returnDelay = 600
         }
         if kindChanged, p.optionsWifi != nil, case .success(let cfg) = makeConfig(p) {
             // Autopilot: the server set for the new network.
@@ -350,9 +368,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// cellular set (servers for whitelisted mobile internet, which usually
     /// get through anywhere); if that does not help either, the user is told.
     private func watchPool(_ p: TunnelPayload, _ st: TunnelStats) {
+        let stalled = trafficStalled(st)
         // Without any network every server looks dead; that is not their fault.
-        guard let c = st.aliveCount, lastPath?.hasPrefix("up") == true else { return }
-        if c.alive > 0 {
+        guard lastPath?.hasPrefix("up") == true else { return }
+        tryOwnSetAgain(p)
+        guard let c = st.aliveCount else {
+            // A single server has no balancer to watch it: requests going out
+            // with no answer for a minute are the sign. A restart sends RST to
+            // every app, so they (and push) reconnect at once.
+            if stalled, Date().timeIntervalSince(lastStallRestart) > 300 {
+                lastStallRestart = Date()
+                Log.write("single server: requests without answers for a minute")
+                restartCore(reason: "сервер перестал отвечать — соединения пересозданы")
+            }
+            return
+        }
+        if c.alive > 0 && !stalled {
             if outageNoticed {
                 outageNoticed = false
                 Notifier.post(.reconnected, title: "Связь восстановлена",
@@ -361,11 +392,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             deadTicks = 0
             return
         }
+        // The observatory calls a member dead only after all of its recent
+        // probes failed (about 3 minutes); one more minute here on top.
         deadTicks += 1
         guard deadTicks >= 2 else { return }
         deadTicks = 0
         if p.optionsCellular != nil, kindOverride == nil, netKind != "cellular" {
             kindOverride = "cellular"
+            overrideSince = Date()
             if case .success(let cfg) = makeConfig(p) {
                 Log.write("autopilot: no server answers, falling back to the cellular set")
                 config = cfg
@@ -381,6 +415,41 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             Notifier.post(.connectionLost, title: "Нет связи с серверами",
                           body: "Ни один из \(c.total) серверов не отвечает. Уведомления приложений не дойдут, пока связь не вернётся. Откройте Aurora и нажмите «Проверить все серверы».",
                           settings: p.notifications, id: "conn-state")
+        }
+    }
+
+    /// Requests go out through the proxy but nothing comes back for two
+    /// ticks (a minute): the link is dead or jammed. A big upload sends far
+    /// more than the 256 KB cap and is not mistaken for this.
+    private func trafficStalled(_ st: TunnelStats) -> Bool {
+        defer { lastUp = st.up; lastDown = st.down }
+        guard let up = lastUp, let down = lastDown, st.up >= up, st.down >= down else { stallTicks = 0; return false }
+        let du = st.up - up, dd = st.down - down
+        if dd == 0 && du >= 1024 && du <= 256 * 1024 { stallTicks += 1 } else { stallTicks = 0 }
+        return stallTicks >= 2
+    }
+
+    /// After a fallback, the network's own set is tried again after 10, 20,
+    /// then 40 minutes, and only if its servers open a TCP connection.
+    private func tryOwnSetAgain(_ p: TunnelPayload) {
+        guard kindOverride != nil, Date().timeIntervalSince(overrideSince) >= returnDelay else { return }
+        let ownKind = netKind
+        let own = ownKind == "wifi" ? (p.optionsWifi ?? p.options) : p.options
+        overrideSince = Date()
+        let reachable = Core.reachableServers(options: own)
+        guard reachable > 0 else {
+            returnDelay = min(returnDelay * 2, 2400)
+            Log.write("autopilot: own set still unreachable, next try in \(Int(returnDelay / 60)) min")
+            return
+        }
+        kindOverride = nil
+        if case .success(let cfg) = makeConfig(p) {
+            Log.write("autopilot: own set answers again (\(reachable) servers)")
+            config = cfg
+            lastBest = nil
+            // Not reset: if the own set fails again, the next return waits longer.
+            returnDelay = min(returnDelay * 2, 2400)
+            restartCore(reason: "серверы для этой сети снова отвечают")
         }
     }
 

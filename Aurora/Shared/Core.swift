@@ -75,10 +75,50 @@ enum Core {
         return v.map { ($0.delay, $0.error) }
     }
 
+    /// What passes the operator directly (see corebridge.ClassifyNetwork).
+    struct NetClass: Decodable {
+        var kind: String   // open | whitelist-ip | whitelist-sni | dpi | offline
+        var ru: Bool
+        var foreign: Bool
+        var sniRU: Bool
+        var sniOther: Bool
+        var detail: String
+
+        enum CodingKeys: String, CodingKey {
+            case kind = "class", ru, foreign, sniRU, sniOther, detail
+        }
+
+        var isWhitelist: Bool { kind == "whitelist-ip" || kind == "whitelist-sni" }
+
+        var title: String {
+            switch kind {
+            case "open": return "интернет открыт"
+            case "whitelist-ip": return "белые списки по IP"
+            case "whitelist-sni": return "белые списки по SNI"
+            case "dpi": return "DPI режет TLS"
+            default: return "нет связи"
+            }
+        }
+    }
+
+    /// Blocking: run off the main thread. Goes around the tunnel when
+    /// setTestInterface was given the physical interface.
+    static func classifyNetwork(timeoutMs: Int = 3000) -> NetClass? {
+        guard let d = CorebridgeClassifyNetwork(timeoutMs).data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(NetClass.self, from: d)
+    }
+
+    /// How many entry servers of a server set open a TCP connection; -1
+    /// when none can be checked. Blocking.
+    static func reachableServers(options: String, timeoutMs: Int = 3000) -> Int {
+        CorebridgeReachableServers(options, timeoutMs)
+    }
+
     struct Analysis: Decodable {
         var cellular: Int
         var wifi: Int
         var dpi: Int
+        var ruSni: Bool?
         var traits: [String]
         var notes: [String]
     }

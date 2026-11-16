@@ -38,8 +38,8 @@ final class AppModel: ObservableObject {
         if settings.routingID == nil { settings.routingID = routings.first?.id }
         migrate()
         autopilot.onNetworkChange = { [weak self] _ in
-            guard let self, !self.vpn.isConnected else { return }
-            Task { await self.autopilot.probeWhitelist() }
+            guard let self else { return }
+            Task { await self.classifyNetwork() }
         }
     }
 
@@ -131,8 +131,9 @@ final class AppModel: ObservableObject {
         var o: [String: Any] = [
             "mode": s.mode.rawValue, "tun": true, "mtu": s.mtu, "sniffing": s.sniffing, "routeOnly": s.routeOnly,
             "ipv6": s.ipv6, "logLevel": s.logLevel, "stats": true, "socksPort": s.localSocksPort, "httpPort": s.localHTTPPort,
-            // The balancer checks its members every 45 s, so a dead server is left within a minute.
-            "lanShare": s.lanShare, "probeURL": s.pingURL, "probeMinutes": 3, "probeSeconds": 45,
+            // Balancer probes cost traffic: every minute on Wi‑Fi, every 3 min on cellular.
+            "lanShare": s.lanShare, "probeURL": s.pingURL, "probeMinutes": 3,
+            "probeSeconds": (kind ?? autopilot.network) == .wifi ? 60 : 180,
             "apnsViaProxy": s.apnsViaProxy, "connIdle": s.connIdle, "useConfigDNS": s.useConfigDNS, "bufferKB": s.bufferKB,
             "dns": ["remote": r.remoteDNS, "direct": r.directDNS, "fakeDNS": r.fakeDNS, "hosts": r.hosts,
                     "strategy": s.ipv6 ? "UseIP" : "UseIPv4"] as [String: Any],
@@ -284,6 +285,15 @@ final class AppModel: ObservableObject {
         Core.setTestInterface(bypass ? autopilot.physicalInterface : nil)
     }
 
+    /// Finds out what the operator lets through, around the tunnel when the
+    /// VPN is on. Skipped under Kill Switch with the VPN on: nothing may
+    /// bypass the tunnel then.
+    func classifyNetwork() async {
+        if vpn.isConnected && settings.killSwitch { return }
+        routeTestsAroundTunnel()
+        await autopilot.probeWhitelist()
+    }
+
     func test(_ list: [ServerNode]) {
         let ids = list.map(\.id)
         guard !ids.isEmpty else { return }
@@ -329,7 +339,8 @@ final class AppModel: ObservableObject {
 
     private func applyLatency(_ r: [UUID: (Int, String?)], recordHealth: Bool = true) {
         guard !r.isEmpty else { return }
-        if recordHealth { autopilot.record(r) }
+        // Without any network a failed test says nothing about the server.
+        if recordHealth && !autopilot.offline { autopilot.record(r) }
         var copy = servers
         for i in copy.indices {
             if let v = r[copy[i].id] {
@@ -399,7 +410,7 @@ final class AppModel: ObservableObject {
     /// Turns the autopilot on: scan, then connect with the chosen pool.
     func startAutopilot() {
         settings.autoSelect = true
-        if !vpn.isConnected, autopilot.network != .other { Task { await autopilot.probeWhitelist() } }
+        if autopilot.network != .other { Task { await classifyNetwork() } }
         autopilotScan()
         if !vpn.isConnected { connect() }
     }

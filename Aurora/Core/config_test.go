@@ -132,19 +132,33 @@ func TestProbeInterval(t *testing.T) {
 		o    buildOptions
 		want string
 	}{
-		{buildOptions{Outbounds: obs, Mode: "global"}, `"probeInterval": "3m"`},
-		{buildOptions{Outbounds: obs, Mode: "global", ProbeMin: 5}, `"probeInterval": "5m"`},
-		{buildOptions{Outbounds: obs, Mode: "global", ProbeMin: 5, ProbeSec: 45}, `"probeInterval": "45s"`},
-		{buildOptions{Outbounds: obs, Mode: "global", ProbeSec: 3}, `"probeInterval": "15s"`},
+		{buildOptions{Outbounds: obs, Mode: "global"}, `"interval": "180s"`},
+		{buildOptions{Outbounds: obs, Mode: "global", ProbeMin: 5}, `"interval": "300s"`},
+		{buildOptions{Outbounds: obs, Mode: "global", ProbeMin: 5, ProbeSec: 60}, `"interval": "60s"`},
+		{buildOptions{Outbounds: obs, Mode: "global", ProbeSec: 3}, `"interval": "15s"`},
 	} {
 		b, _ := json.Marshal(c.o)
 		out := BuildConfig(string(b))
-		if !strings.Contains(out, c.want) {
+		if !strings.Contains(out, c.want) || !strings.Contains(out, `"connectivity": "https://ya.ru"`) || !strings.Contains(out, `"leastLoad"`) {
 			t.Fatal(c.want, out)
 		}
 		if e := Validate(out); e != "" {
 			t.Fatal(e)
 		}
+	}
+	// Sampling keeps the dead-detection window near three minutes.
+	b, _ := json.Marshal(buildOptions{Outbounds: obs, Mode: "global", ProbeSec: 60})
+	if out := BuildConfig(string(b)); !strings.Contains(out, `"sampling": 3`) {
+		t.Fatal(out)
+	}
+	// The balancer starts and reports its members through Stats.
+	b, _ = json.Marshal(buildOptions{Outbounds: obs, Mode: "global", Stats: true, ProbeSec: 60})
+	if e := Start(BuildConfig(string(b)), -1, ""); e != "" {
+		t.Fatal(e)
+	}
+	defer Stop()
+	if s := Stats(); !strings.Contains(s, `"up"`) {
+		t.Fatal(s)
 	}
 }
 

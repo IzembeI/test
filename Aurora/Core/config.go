@@ -38,8 +38,11 @@ type buildOptions struct {
 	Mux       muxOptions       `json:"mux"`
 	Stats     bool             `json:"stats"`
 	// ProbeSec, when set, wins over ProbeMin: how often the balancer checks
-	// its members. Short means a dead server is left within a minute.
+	// its members.
 	ProbeSec int `json:"probeSeconds"`
+	// ConnectivityURL is fetched directly when a probe fails, to tell a dead
+	// server from a dead network. It must be reachable under white lists.
+	ConnectivityURL string `json:"connectivityURL"`
 	// APNsViaProxy sends Apple push traffic through the proxy before any other
 	// rule, so profiles that route Apple directly cannot break notifications.
 	APNsViaProxy bool `json:"apnsViaProxy"`
@@ -471,22 +474,14 @@ func buildConfig(o buildOptions) (map[string]any, error) {
 	routing := map[string]any{"domainStrategy": domainStrategy, "rules": rules}
 	cfg := map[string]any{"log": logSection(o)}
 	if useBalancer {
-		routing["balancers"] = []any{map[string]any{"tag": "auto", "selector": []string{"proxy-"}, "strategy": map[string]any{"type": "leastPing"}, "fallbackTag": proxyTags[0]}}
-		probe := o.ProbeURL
-		if probe == "" {
-			probe = "https://www.gstatic.com/generate_204"
-		}
-		interval := ""
-		switch {
-		case o.ProbeSec > 0:
-			// Below 15 s the probes themselves start to cost traffic and battery.
-			interval = itoa(max(15, o.ProbeSec)) + "s"
-		case o.ProbeMin > 0:
-			interval = itoa(o.ProbeMin) + "m"
-		default:
-			interval = "3m"
-		}
-		cfg["observatory"] = map[string]any{"subjectSelector": []string{"proxy-"}, "probeURL": probe, "probeInterval": interval, "enableConcurrency": true}
+		// leastLoad weighs the average delay and its spread over the last
+		// samples, so the choice does not jump between close servers the way
+		// leastPing's single measurement did. tolerance keeps the current
+		// member unless another is clearly better.
+		routing["balancers"] = []any{map[string]any{"tag": "auto", "selector": []string{"proxy-"},
+			"strategy":    map[string]any{"type": "leastLoad", "settings": map[string]any{"expected": 1, "maxRTT": "3s", "tolerance": 0.3}},
+			"fallbackTag": proxyTags[0]}}
+		cfg["burstObservatory"] = burstObservatory(o)
 	}
 	cfg["routing"] = routing
 	dns := dnsSection(o, geosite)
@@ -697,6 +692,37 @@ func buildFromRaw(o buildOptions) (map[string]any, error) {
 		cfg["policy"] = policy
 	}
 	return cfg, nil
+}
+
+// burstObservatory probes the balancer members. Each probe is a fresh TLS
+// connection through the server (10-15 KB), so the interval decides the
+// traffic: every 45 s for six servers came to over 100 MB a day on LTE.
+// The app asks for 60 s on Wi-Fi and 3 min on cellular. When a probe fails,
+// the connectivity URL (a Russian site, reachable under white lists) is
+// tried directly: if the network itself is down, the server is not blamed.
+func burstObservatory(o buildOptions) map[string]any {
+	sec := 180
+	switch {
+	case o.ProbeSec > 0:
+		// Below 15 s the probes themselves cost too much traffic and battery.
+		sec = max(15, o.ProbeSec)
+	case o.ProbeMin > 0:
+		sec = o.ProbeMin * 60
+	}
+	// A member counts as dead once all of its recent samples failed: keep
+	// the window near three minutes whatever the interval.
+	sampling := max(2, min(5, 180/sec))
+	probe := o.ProbeURL
+	if probe == "" {
+		probe = "https://www.gstatic.com/generate_204"
+	}
+	connectivity := o.ConnectivityURL
+	if connectivity == "" {
+		connectivity = "https://ya.ru"
+	}
+	return map[string]any{"subjectSelector": []string{"proxy-"}, "pingConfig": map[string]any{
+		"destination": probe, "connectivity": connectivity, "interval": itoa(sec) + "s",
+		"sampling": sampling, "timeout": "5s", "httpMethod": "HEAD"}}
 }
 
 // fastDeadLink makes a dead link to the server show in about two minutes
