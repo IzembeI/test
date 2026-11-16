@@ -53,6 +53,9 @@ func SetMemoryLimit(megabytes int) {
 func Start(configJSON string, tunFd int, assetDir string) string {
 	mu.Lock()
 	defer mu.Unlock()
+	if reason := licenseGate(assetDir); reason != "" {
+		return "license: " + reason
+	}
 	if instance != nil {
 		_ = instance.Close()
 		instance = nil
