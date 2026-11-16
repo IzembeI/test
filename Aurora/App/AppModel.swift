@@ -393,7 +393,7 @@ final class AppModel: ObservableObject {
         if !vpn.isConnected { connect() }
     }
 
-    static func isRussian(_ n: ServerNode) -> Bool {
+    nonisolated static func isRussian(_ n: ServerNode) -> Bool {
         if n.flag == "🇷🇺" { return true }
         let name = n.name.lowercased()
         return ["russia", "россия", "moscow", "москва", "спб", "petersburg", "[ru]", " ru ", "ru-", "-ru"].contains { name.contains($0) }
