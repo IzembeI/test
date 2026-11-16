@@ -45,13 +45,19 @@ struct AuroraApp: App {
             RootView()
                 .environmentObject(model)
                 .environmentObject(model.vpn)
+                .environmentObject(model.autopilot)
                 .preferredColorScheme(model.settings.theme == .system ? nil : (model.settings.theme == .dark ? .dark : .light))
                 .tint(Theme.accent(model.settings.accent))
                 .onOpenURL { url in model.handle(text: url.absoluteString) }
                 .task {
                     model.startPolling()
                     if model.settings.updateSubsOnLaunch { await model.updateAll(onlyDue: true) }
-                    if model.settings.autoPingOnOpen { model.testAll() }
+                    if !model.vpn.isConnected { await model.autopilot.probeWhitelist() }
+                    if model.settings.autoSelect && model.settings.autopilotScanOnOpen {
+                        model.autopilotScan()
+                    } else if model.settings.autoPingOnOpen {
+                        model.testAll()
+                    }
                     Notifier.scheduleExpiry(model.subscriptions, settings: model.settings.notifications)
                 }
         }

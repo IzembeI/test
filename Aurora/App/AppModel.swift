@@ -22,6 +22,8 @@ final class AppModel: ObservableObject {
     @Published var announcement: (title: String, text: String)?
 
     let vpn = VPNController()
+    let autopilot = Autopilot()
+    @Published var autopilotBusy = false
     private var pollTask: Task<Void, Never>?
     private var lastStats: TunnelStats?
     private var lastStatsAt = Date()
@@ -35,6 +37,10 @@ final class AppModel: ObservableObject {
         if let s = Storage.defaults.string(forKey: "selected") { selectedID = UUID(uuidString: s) }
         if settings.routingID == nil { settings.routingID = routings.first?.id }
         migrate()
+        autopilot.onNetworkChange = { [weak self] _ in
+            guard let self, !self.vpn.isConnected else { return }
+            Task { await self.autopilot.probeWhitelist() }
+        }
     }
 
     /// One-time updates of saved settings when defaults change.
@@ -95,7 +101,31 @@ final class AppModel: ObservableObject {
         if vpn.isConnected || vpn.status == .connecting || vpn.status == .reasserting { vpn.stop() } else { connect() }
     }
 
-    func buildOptions(for node: ServerNode?) -> [String: Any] {
+    /// Servers the autopilot may use: every subscription (and manual
+    /// servers), or only one group.
+    var autopilotScope: [ServerNode] {
+        if settings.autopilotAllGroups { return servers }
+        let g = settings.autoSelectGroupID ?? selected?.groupID
+        return servers.filter { $0.groupID == g }
+    }
+
+    func autopilotPool(_ kind: NetKind) -> [ServerNode] {
+        autopilot.pool(from: autopilotScope, kind: kind, size: settings.autopilotPoolSize, useHints: settings.autopilotNetworkAware)
+    }
+
+    /// Outbound tag -> server name, in the order BuildConfig tags members.
+    func groupNames(_ pool: [ServerNode]) -> [String: String] {
+        let links = pool.filter { $0.rawConfig == nil }
+        let configs = pool.filter { $0.rawConfig != nil }
+        var names: [String: String] = [:]
+        func label(_ n: ServerNode) -> String { (n.flag.isEmpty ? "" : n.flag + " ") + n.displayName }
+        if pool.count == 1, let only = pool.first { return ["proxy": label(only)] }
+        for (i, n) in links.enumerated() { names["proxy-\(i)"] = label(n) }
+        for (j, n) in configs.enumerated() { names["proxy-c\(j)"] = label(n) }
+        return names
+    }
+
+    func buildOptions(for node: ServerNode?, kind: NetKind? = nil) -> [String: Any] {
         let r = routing
         let s = settings
         var o: [String: Any] = [
@@ -113,9 +143,9 @@ final class AppModel: ObservableObject {
             "mux": ["enabled": s.muxEnabled, "concurrency": s.muxConcurrency, "xudpConcurrency": 16] as [String: Any],
         ]
         if s.autoSelect {
-            let group = servers.filter { $0.groupID == (s.autoSelectGroupID ?? node?.groupID) && $0.rawConfig == nil }
-            let pick = Array(group.sorted { ($0.latency ?? 99999) < ($1.latency ?? 99999) }.prefix(12))
-            o["outbounds"] = pick.compactMap { JSON.object($0.outbound) }
+            let pick = autopilotPool(kind ?? autopilot.network)
+            o["outbounds"] = pick.filter { $0.rawConfig == nil }.compactMap { JSON.object($0.outbound) }
+            o["configs"] = pick.compactMap(\.rawConfig)
         } else if let node {
             if let raw = node.rawConfig {
                 o["rawConfig"] = raw
@@ -153,16 +183,26 @@ final class AppModel: ObservableObject {
         }
         let r = routing
         let sub = subscription(for: node)
-        var name = directTest ? "Проверка подписи" : settings.autoSelect ? "Авто · лучший сервер" : (node?.displayName ?? "Напрямую")
+        var name = directTest ? "Проверка подписи" : settings.autoSelect ? "Автопилот" : (node?.displayName ?? "Напрямую")
         if let f = node?.flag, !f.isEmpty, !settings.autoSelect { name = f + " " + name }
         var addresses: [String] = []
         if let a = node?.address { addresses.append(a) }
-        return TunnelPayload(
+        var payload = TunnelPayload(
             options: JSON.string(opts), serverName: name, serverAddresses: addresses, mtu: settings.mtu, ipv6: settings.ipv6,
             excludeLocal: settings.excludeLocal, memoryLimitMB: settings.memoryLimitMB,
             reconnectOnNetworkChange: settings.reconnectOnNetworkChange, notifications: settings.notifications,
             geoipURL: r.useGeoFiles ? r.geoipURL : nil, geositeURL: r.useGeoFiles ? r.geositeURL : nil,
             subscriptionTotal: sub?.total ?? 0, subscriptionUsed: sub?.used ?? 0, subscriptionExpire: sub?.expire)
+        if settings.autoSelect && !directTest {
+            // The tunnel switches between these by itself when the network changes.
+            let wifiPool = autopilotPool(.wifi), cellPool = autopilotPool(.cellular)
+            payload.optionsWifi = JSON.string(buildOptions(for: node, kind: .wifi))
+            payload.optionsCellular = JSON.string(buildOptions(for: node, kind: .cellular))
+            payload.namesWifi = groupNames(wifiPool)
+            payload.namesCellular = groupNames(cellPool)
+            payload.groupNames = groupNames(autopilotPool(autopilot.network))
+        }
+        return payload
     }
 
     func connect() {
@@ -277,8 +317,9 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func applyLatency(_ r: [UUID: (Int, String?)]) {
+    private func applyLatency(_ r: [UUID: (Int, String?)], recordHealth: Bool = true) {
         guard !r.isEmpty else { return }
+        if recordHealth { autopilot.record(r) }
         var copy = servers
         for i in copy.indices {
             if let v = r[copy[i].id] {
@@ -289,6 +330,67 @@ final class AppModel: ObservableObject {
             }
         }
         servers = copy
+    }
+
+    /// Fast scan of every server: a parallel pass with a short timeout,
+    /// results shown as they arrive, then the best few are measured again
+    /// with the normal timeout. Ends by applying the new pool.
+    func autopilotScan() {
+        guard !autopilotBusy else { return }
+        let all = autopilotScope
+        guard !all.isEmpty else { toast = "Добавьте подписку — автопилоту не из чего выбирать"; return }
+        autopilotBusy = true
+        testing.formUnion(all.map(\.id))
+        let url = settings.pingURL
+        let timeout = settings.pingTimeoutMs
+        func item(_ n: ServerNode) -> String {
+            n.rawConfig.map { JSON.string(["config": $0]) } ?? ("{\"outbound\":" + n.outbound + "}")
+        }
+        let quick = all.map { ($0.id, item($0)) }
+        Task.detached(priority: .userInitiated) {
+            // Pass 1: everything in parallel, short timeout.
+            var pass1: [UUID: (Int, String?)] = [:]
+            for chunk in stride(from: 0, to: quick.count, by: 32) {
+                let part = Array(quick[chunk..<min(chunk + 32, quick.count)])
+                let r = Core.urlTestDetailed(items: part.map(\.1), url: url, timeoutMs: 2500, concurrency: 16)
+                var res: [UUID: (Int, String?)] = [:]
+                for (i, it) in part.enumerated() { res[it.0] = i < r.count ? r[i] : (-1, nil) }
+                pass1.merge(res) { $1 }
+                let snapshot = res
+                await MainActor.run { self.applyLatency(snapshot, recordHealth: false) }
+            }
+            // Pass 2: the best 8 again, with the normal timeout, for accuracy.
+            let best = pass1.filter { $0.value.0 > 0 }.sorted { $0.value.0 < $1.value.0 }.prefix(8).map(\.key)
+            let again = quick.filter { best.contains($0.0) }
+            let r2 = Core.urlTestDetailed(items: again.map(\.1), url: url, timeoutMs: timeout, concurrency: 8)
+            var final = pass1
+            for (i, it) in again.enumerated() where i < r2.count {
+                let a = pass1[it.0]?.0 ?? -1, b = r2[i].0
+                final[it.0] = b > 0 ? ((a > 0 ? min(a, b) : b), nil) : r2[i]
+            }
+            let snapshot = final
+            await MainActor.run {
+                self.applyLatency(snapshot)
+                self.testing.subtract(quick.map(\.0))
+                self.autopilotBusy = false
+                let ok = snapshot.values.filter { $0.0 > 0 }.count
+                let pool = self.autopilotPool(self.autopilot.network)
+                if let top = pool.first, let ms = top.latency, ms > 0 {
+                    self.toast = "Проверено \(snapshot.count), отвечают \(ok). Лучший для \(self.autopilot.network.title): \(top.displayName) · \(ms) мс"
+                } else {
+                    self.toast = "Проверено \(snapshot.count), отвечают \(ok)"
+                }
+                if self.settings.autoSelect { self.applyIfConnected() }
+            }
+        }
+    }
+
+    /// Turns the autopilot on: scan, then connect with the chosen pool.
+    func startAutopilot() {
+        settings.autoSelect = true
+        if !vpn.isConnected, autopilot.network != .other { Task { await autopilot.probeWhitelist() } }
+        autopilotScan()
+        if !vpn.isConnected { connect() }
     }
 
     static func isRussian(_ n: ServerNode) -> Bool {

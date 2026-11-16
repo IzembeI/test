@@ -2,6 +2,7 @@ package corebridge
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -54,5 +55,45 @@ func TestURLTestDetailedErrors(t *testing.T) {
 	t.Log(r)
 	if !strings.Contains(r, `"delay":-1`) || !strings.Contains(r, "error") {
 		t.Fatal(r)
+	}
+}
+
+func TestAutoGroupWithConfigs(t *testing.T) {
+	cfgA := `{"outbounds":[{"tag":"proxy","protocol":"vless","settings":{"address":"a.example.com","port":443,"id":"b831381d-6324-4d53-ad4f-8cda48b30811","encryption":"none"},"streamSettings":{"network":"grpc","security":"tls","tlsSettings":{"serverName":"a.example.com"},"grpcSettings":{"serviceName":"x"},"sockopt":{"dialerProxy":"frag"}}},{"tag":"frag","protocol":"freedom","settings":{"fragment":{"packets":"tlshello","length":"10-20","interval":"10-20"}}},{"tag":"direct","protocol":"freedom"}],"routing":{"rules":[{"type":"field","outboundTag":"proxy","network":"tcp,udp"}]}}`
+	cfgB := `{"outbounds":[{"tag":"direct","protocol":"freedom"},{"tag":"main","protocol":"trojan","settings":{"address":"1.2.3.4","port":443,"password":"p"},"streamSettings":{"security":"tls"}}]}`
+	obs := outboundsFrom(t, "vless://b831381d-6324-4d53-ad4f-8cda48b30811@1.2.3.4:443?type=tcp&security=reality&pbk=Z84J2IelR9ch3k8VtlVhhs5ycBUlXA7wHBWcBrjqnAw&fp=chrome&sni=www.microsoft.com&sid=6ba85179e30d4fc2&encryption=none#DE")
+	for i, c := range []buildOptions{
+		{Outbounds: obs, Configs: []string{cfgA, cfgB}, Mode: "rule", TUN: true, Stats: true, Fragment: fragmentOptions{Enabled: true}},
+		{Configs: []string{cfgA, cfgB}, Mode: "global", TUN: true},
+		{Configs: []string{cfgA}, Mode: "global", TUN: true},
+	} {
+		b, _ := json.Marshal(c)
+		out := BuildConfig(string(b))
+		if strings.HasPrefix(out, "error:") {
+			t.Fatal(i, out)
+		}
+		if e := Validate(out); e != "" {
+			t.Fatal(i, e, out)
+		}
+		if i == 0 && (!strings.Contains(out, `"dialerProxy": "dep0-frag"`) || !strings.Contains(out, `"proxy-c1"`) || !strings.Contains(out, "balancerTag")) {
+			t.Fatal(out)
+		}
+	}
+	if e := Start(BuildConfig(`{"configs":[`+strconv.Quote(cfgA)+`,`+strconv.Quote(cfgB)+`],"mode":"global","stats":true}`), -1, ""); e != "" {
+		t.Fatal(e)
+	}
+	t.Log(Stats())
+	Stop()
+}
+
+func TestAnalyze(t *testing.T) {
+	sim := `{"name":"[SIM|Глушилки] – Москва 🇷🇺","outbound":{"protocol":"vless","settings":{"address":"1.2.3.4","port":443,"id":"x","flow":"xtls-rprx-vision"},"streamSettings":{"network":"raw","security":"reality","realitySettings":{"serverName":"vk.com"}}}}`
+	hy := `{"name":"[WI-FI] Нидерланды","outbound":{"protocol":"hysteria","settings":{"address":"5.6.7.8","port":8443},"streamSettings":{"network":"hysteria","security":"tls","tlsSettings":{"serverName":"www.microsoft.com"}}}}`
+	var a, b analysis
+	json.Unmarshal([]byte(Analyze(sim)), &a)
+	json.Unmarshal([]byte(Analyze(hy)), &b)
+	t.Log(a, b)
+	if a.Cellular <= b.Cellular || b.WiFi < 50 || a.DPI < 80 {
+		t.Fatal(a, b)
 	}
 }

@@ -167,6 +167,24 @@ struct ServersView: View {
     }
 }
 
+struct ScoreRow: View {
+    var title: String
+    var value: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title).font(.subheadline)
+                Spacer()
+                Text("\(value)").font(.subheadline.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(value >= 70 ? .green : (value >= 45 ? .orange : .red))
+            }
+            ProgressView(value: Double(value), total: 100)
+                .tint(value >= 70 ? .green : (value >= 45 ? .orange : .red))
+        }
+    }
+}
+
 struct ServerRow: View {
     @EnvironmentObject var model: AppModel
     var node: ServerNode
@@ -183,6 +201,13 @@ struct ServerRow: View {
                 HStack(spacing: 6) {
                     ProtoBadge(text: node.protoLabel)
                     if !node.transportLabel.isEmpty { Text(node.transportLabel).font(.caption2).foregroundStyle(.secondary) }
+                    if model.settings.autoSelect {
+                        let kind = model.autopilot.network
+                        let fit = model.autopilot.fitness(node, kind: kind)
+                        Label("\(fit)", systemImage: kind == .cellular ? "antenna.radiowaves.left.and.right" : "wifi")
+                            .font(.caption2)
+                            .foregroundStyle(fit >= 70 ? .green : (fit >= 45 ? .orange : .red))
+                    }
                 }
             }
             Spacer()
@@ -277,6 +302,23 @@ struct ServerEditView: View {
                     if let l = node.latency { LabeledContent("Пинг", value: Theme.latencyText(l)) }
                     if let e = node.testError, (node.latency ?? 0) < 0 {
                         Text("Ошибка проверки: \(e)").font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                    }
+                }
+                if let a = model.autopilot.analysis(node) {
+                    Section {
+                        ScoreRow(title: "Мобильный интернет / белые списки", value: a.cellular)
+                        ScoreRow(title: "Wi‑Fi / открытый интернет", value: a.wifi)
+                        ScoreRow(title: "Устойчивость к блокировкам (DPI)", value: a.dpi)
+                        if !a.traits.isEmpty {
+                            Text(a.traits.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+                        }
+                        ForEach(a.notes, id: \.self) { Text("• " + $0).font(.caption) }
+                        if let h = model.autopilot.record(for: node.id) {
+                            Text("История (\(model.autopilot.network.title)): успешно \(h.ok), неудачно \(h.fail)\(h.latency.map { ", в среднем \(Int($0)) мс" } ?? "")")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    } header: {
+                        Text("Анализ конфига")
                     }
                 }
                 if !node.link.isEmpty {

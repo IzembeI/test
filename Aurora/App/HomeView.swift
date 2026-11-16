@@ -4,6 +4,7 @@ import NetworkExtension
 struct HomeView: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var vpn: VPNController
+    @EnvironmentObject var autopilot: Autopilot
     @Binding var tab: Int
     @State private var now = Date()
     private let clock = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -19,7 +20,8 @@ struct HomeView: View {
                         ForEach(RouteMode.allCases) { Text($0.title).tag($0) }
                     }
                     .pickerStyle(.segmented)
-                    serverCard
+                    autopilotCard
+                    if !model.settings.autoSelect { serverCard }
                     if vpn.isConnected && model.settings.showSpeedOnHome { speedCard }
                     if let sub = model.subscription(for: model.selected) { SubscriptionCard(sub: sub) }
                     if let err = vpn.lastError, vpn.status == .disconnected {
@@ -123,6 +125,55 @@ struct HomeView: View {
             if let s = model.selected {
                 Button { model.test([s]) } label: { Label("Проверить пинг", systemImage: "speedometer") }
                 Button { UIPasteboard.general.string = model.shareLink(s) } label: { Label("Скопировать ссылку", systemImage: "doc.on.doc") }
+            }
+        }
+    }
+
+    private var autopilotCard: some View {
+        Card {
+            HStack(spacing: 12) {
+                Image(systemName: "sparkles")
+                    .font(.title2)
+                    .foregroundStyle(model.settings.autoSelect ? Color.accentColor : .secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Автопилот").font(.headline)
+                    Text(autopilot.summary).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("", isOn: Binding(get: { model.settings.autoSelect }, set: { on in
+                    if on { model.startAutopilot() } else { model.settings.autoSelect = false; model.applyIfConnected() }
+                }))
+                .labelsHidden()
+            }
+            if model.settings.autoSelect {
+                let pool = model.autopilotPool(autopilot.network)
+                if vpn.isConnected, let best = model.stats.bestName {
+                    Label("Сейчас: \(best)", systemImage: "bolt.horizontal.circle").font(.subheadline)
+                } else if let top = pool.first {
+                    Label("Лучший: \(top.flag.isEmpty ? "" : top.flag + " ")\(top.displayName)", systemImage: "star").font(.subheadline)
+                }
+                Text("В наборе \(pool.count) из \(model.autopilotScope.count): ядро само переключается на живой и быстрый.")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button {
+                        model.autopilotScan()
+                    } label: {
+                        if model.autopilotBusy {
+                            HStack { ProgressView().controlSize(.small); Text("Проверяю \(model.testing.count)…") }
+                        } else {
+                            Label("Проверить все серверы", systemImage: "waveform.path.ecg")
+                        }
+                    }
+                    .disabled(model.autopilotBusy)
+                    Spacer()
+                    if !vpn.isConnected {
+                        Button { Task { await autopilot.probeWhitelist() } } label: { Image(systemName: "antenna.radiowaves.left.and.right") }
+                    }
+                }
+                .font(.subheadline)
+            } else {
+                Text("Сам изучает конфиги всех подписок, проверяет серверы и держит подключение к лучшему для текущей сети.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
     }

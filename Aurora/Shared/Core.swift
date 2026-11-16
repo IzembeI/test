@@ -75,6 +75,22 @@ enum Core {
         return v.map { ($0.delay, $0.error) }
     }
 
+    struct Analysis: Decodable {
+        var cellular: Int
+        var wifi: Int
+        var dpi: Int
+        var traits: [String]
+        var notes: [String]
+    }
+
+    static func analyze(_ n: ServerNode) -> Analysis? {
+        var item: [String: Any] = ["name": n.name]
+        if let raw = n.rawConfig { item["config"] = raw } else if let ob = JSON.object(n.outbound) { item["outbound"] = ob }
+        let out = CorebridgeAnalyze(JSON.string(item))
+        guard let d = out.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(Analysis.self, from: d)
+    }
+
     static func tcpPing(host: String, port: Int, timeoutMs: Int) -> Int {
         CorebridgeTCPPing(host, port, timeoutMs)
     }

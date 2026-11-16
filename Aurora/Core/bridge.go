@@ -4,6 +4,7 @@
 package corebridge
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"runtime/debug"
@@ -12,7 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xtls/xray-core/app/observatory"
 	"github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/features/extension"
 	"github.com/xtls/xray-core/features/stats"
 	_ "github.com/xtls/xray-core/main/distro/all"
 )
@@ -154,6 +157,15 @@ type trafficSnapshot struct {
 	Uptime   int64            `json:"uptime"`
 	Memory   uint64           `json:"memory"`
 	Tags     map[string]int64 `json:"tags"`
+	// Best is the balancer member the observatory finds fastest right now.
+	Best    string       `json:"best,omitempty"`
+	Members []memberStat `json:"members,omitempty"`
+}
+
+type memberStat struct {
+	Tag   string `json:"tag"`
+	Alive bool   `json:"alive"`
+	Delay int64  `json:"delay"`
 }
 
 // Stats returns cumulative traffic as JSON. Traffic of outbounds tagged
@@ -174,6 +186,10 @@ func Stats() string {
 				}
 				v := c.Value()
 				snap.Tags[parts[1]+":"+parts[3]] = v
+				// Helper hops carry the same bytes as the proxy they serve.
+				if strings.HasPrefix(parts[1], "dep") || strings.HasPrefix(parts[1], "chain-") || parts[1] == "fragment" {
+					return true
+				}
 				direct := parts[1] == "direct" || parts[1] == "block" || parts[1] == "dns-out"
 				switch {
 				case parts[3] == "uplink" && direct:
@@ -189,6 +205,20 @@ func Stats() string {
 			})
 		}
 		snap.Uptime = int64(time.Since(start).Seconds())
+		if obs, ok := inst.GetFeature(extension.ObservatoryType()).(extension.Observatory); ok && obs != nil {
+			if msg, err := obs.GetObservation(context.Background()); err == nil {
+				if res, ok := msg.(*observatory.ObservationResult); ok {
+					var best int64 = -1
+					for _, st := range res.Status {
+						snap.Members = append(snap.Members, memberStat{Tag: st.OutboundTag, Alive: st.Alive, Delay: st.Delay})
+						if st.Alive && (best < 0 || st.Delay < best) {
+							best = st.Delay
+							snap.Best = st.OutboundTag
+						}
+					}
+				}
+			}
+		}
 	}
 	snap.Memory = residentMemory()
 	b, _ := json.Marshal(snap)

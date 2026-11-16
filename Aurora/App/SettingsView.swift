@@ -264,13 +264,19 @@ struct ConnectionSettingsView: View {
             }
             Section("Надёжность") {
                 Toggle("Переподключать при смене сети", isOn: $model.settings.reconnectOnNetworkChange)
-                Toggle("Авто: лучший сервер группы", isOn: $model.settings.autoSelect)
+                Toggle("Автопилот", isOn: $model.settings.autoSelect)
                 if model.settings.autoSelect {
-                    Picker("Группа", selection: $model.settings.autoSelectGroupID) {
-                        Text("Группа выбранного сервера").tag(UUID?.none)
-                        ForEach(model.subscriptions) { Text($0.name).tag(UUID?.some($0.id)) }
+                    Toggle("Все подписки", isOn: $model.settings.autopilotAllGroups)
+                    if !model.settings.autopilotAllGroups {
+                        Picker("Группа", selection: $model.settings.autoSelectGroupID) {
+                            Text("Группа выбранного сервера").tag(UUID?.none)
+                            ForEach(model.subscriptions) { Text($0.name).tag(UUID?.some($0.id)) }
+                        }
                     }
-                    Text("Ядро само проверяет до 12 серверов каждые 3 минуты и переключается на самый быстрый без разрыва туннеля.")
+                    Toggle("Учитывать сеть (Wi‑Fi / сотовая)", isOn: $model.settings.autopilotNetworkAware)
+                    Stepper("Серверов в наборе: \(model.settings.autopilotPoolSize)", value: $model.settings.autopilotPoolSize, in: 2...12)
+                    Toggle("Проверять всё при открытии", isOn: $model.settings.autopilotScanOnOpen)
+                    Text("Автопилот разбирает каждый конфиг (протокол, Reality/TLS, SNI, порт, страна, фрагментация), проверяет все серверы двумя быстрыми проходами и ведёт историю надёжности отдельно для Wi‑Fi и сотовой. Лучшие уходят в балансировщик ядра: оно само переключается без разрыва, а при смене Wi‑Fi ↔ LTE расширение подставляет набор для новой сети.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }

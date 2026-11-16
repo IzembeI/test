@@ -13,6 +13,9 @@ import (
 // buildOptions is what the app sends to BuildConfig.
 type buildOptions struct {
 	Outbounds []map[string]any `json:"outbounds"` // one = single server, several = auto (least ping) group
+	// Configs are full Xray JSON configs that join the auto group: the proxy
+	// outbound of each and the outbounds it dials through are taken over.
+	Configs   []string         `json:"configs"`
 	Chain     []map[string]any `json:"chain"`     // optional front hops, the first dials directly
 	RawConfig string           `json:"rawConfig"` // a full Xray JSON from the user, used as is with a TUN added
 	Mode      string           `json:"mode"`      // rule | global | direct
@@ -218,7 +221,7 @@ func buildConfig(o buildOptions) (map[string]any, error) {
 	if strings.TrimSpace(o.RawConfig) != "" {
 		return buildFromRaw(o)
 	}
-	if len(o.Outbounds) == 0 && o.Mode != "direct" {
+	if len(o.Outbounds) == 0 && len(o.Configs) == 0 && o.Mode != "direct" {
 		return nil, errString("no server selected")
 	}
 	geoip := hasAsset(o.AssetDir, "geoip.dat")
@@ -257,9 +260,33 @@ func buildConfig(o buildOptions) (map[string]any, error) {
 		if len(o.Chain) > 0 {
 			sockoptOf(c)["dialerProxy"] = "chain-0"
 		} else if o.Fragment.Enabled && !isUDPOnly(c) {
-			sockoptOf(c)["dialerProxy"] = "fragment"
+			if _, set := sockoptOf(c)["dialerProxy"]; !set {
+				sockoptOf(c)["dialerProxy"] = "fragment"
+			}
 		}
 		outbounds = append(outbounds, c)
+	}
+	for j, raw := range o.Configs {
+		main, deps, err := extractChain(raw, "dep"+itoa(j)+"-")
+		if err != nil {
+			continue
+		}
+		tag := "proxy-c" + itoa(j)
+		main["tag"] = tag
+		proxyTags = append(proxyTags, tag)
+		outbounds = append(outbounds, main)
+		for _, d := range deps {
+			outbounds = append(outbounds, d)
+		}
+	}
+	if len(o.Outbounds) == 1 && len(proxyTags) > 1 {
+		// The single outbound was tagged "proxy" but now sits in a group.
+		first := outbounds[0].(map[string]any)
+		first["tag"] = "proxy-0"
+		proxyTags[0] = "proxy-0"
+	}
+	if len(proxyTags) == 0 && o.Mode != "direct" {
+		return nil, errString("no usable server in the group")
 	}
 	for i, hop := range o.Chain {
 		c := clone(hop)
@@ -308,7 +335,7 @@ func buildConfig(o buildOptions) (map[string]any, error) {
 	for _, ob := range outbounds {
 		m := ob.(map[string]any)
 		tag, _ := m["tag"].(string)
-		if !strings.HasPrefix(tag, "proxy") && !strings.HasPrefix(tag, "chain-") {
+		if !strings.HasPrefix(tag, "proxy") && !strings.HasPrefix(tag, "chain-") && !strings.HasPrefix(tag, "dep") {
 			continue
 		}
 		host, _ := outboundEndpoint(m)
@@ -340,6 +367,15 @@ func buildConfig(o buildOptions) (map[string]any, error) {
 		mainTag = "direct"
 	}
 	useBalancer := len(proxyTags) > 1 && o.Mode != "direct"
+	if len(proxyTags) == 1 && proxyTags[0] != "proxy" {
+		// A single member left: address it as the plain proxy.
+		for _, ob := range outbounds {
+			if m := ob.(map[string]any); m["tag"] == proxyTags[0] {
+				m["tag"] = "proxy"
+			}
+		}
+		proxyTags[0] = "proxy"
+	}
 
 	// Routing
 	rules := []any{}
@@ -633,3 +669,117 @@ func buildFromRaw(o buildOptions) (map[string]any, error) {
 }
 
 func itoa(i int) string { return strconv.Itoa(i) }
+
+var nonProxy = map[string]bool{"freedom": true, "blackhole": true, "dns": true, "loopback": true}
+
+// extractChain takes the proxy outbound of a full config (the one its
+// routing sends traffic to by default, else the first proxy outbound) and
+// every outbound it dials through, renaming the helpers with prefix.
+func extractChain(raw string, prefix string) (map[string]any, []map[string]any, error) {
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		return nil, nil, err
+	}
+	list, _ := cfg["outbounds"].([]any)
+	byTag := map[string]map[string]any{}
+	var ordered []map[string]any
+	for _, x := range list {
+		if m, ok := x.(map[string]any); ok {
+			ordered = append(ordered, m)
+			if t, _ := m["tag"].(string); t != "" {
+				byTag[t] = m
+			}
+		}
+	}
+	var main map[string]any
+	// Prefer the outbound of the last catch-all routing rule.
+	if routing, ok := cfg["routing"].(map[string]any); ok {
+		if rules, ok := routing["rules"].([]any); ok {
+			for _, r := range rules {
+				rm, _ := r.(map[string]any)
+				if rm == nil {
+					continue
+				}
+				if t, _ := rm["outboundTag"].(string); t != "" {
+					if ob := byTag[t]; ob != nil && !nonProxy[str(ob["protocol"])] && isCatchAll(rm) {
+						main = ob
+					}
+				}
+			}
+		}
+	}
+	if main == nil {
+		for _, ob := range ordered {
+			if !nonProxy[str(ob["protocol"])] {
+				main = ob
+				break
+			}
+		}
+	}
+	if main == nil {
+		return nil, nil, errString("no proxy outbound")
+	}
+	main = clone(main)
+	var deps []map[string]any
+	seen := map[string]bool{}
+	var follow func(ob map[string]any)
+	follow = func(ob map[string]any) {
+		refs := []*string{}
+		var dp, pt string
+		if ss, ok := ob["streamSettings"].(map[string]any); ok {
+			if so, ok := ss["sockopt"].(map[string]any); ok {
+				dp, _ = so["dialerProxy"].(string)
+				if dp != "" {
+					so["dialerProxy"] = prefix + dp
+				}
+			}
+		}
+		if ps, ok := ob["proxySettings"].(map[string]any); ok {
+			pt, _ = ps["tag"].(string)
+			if pt != "" {
+				ps["tag"] = prefix + pt
+			}
+		}
+		_ = refs
+		for _, t := range []string{dp, pt} {
+			if t == "" || seen[t] {
+				continue
+			}
+			seen[t] = true
+			if d := byTag[t]; d != nil {
+				c := clone(d)
+				c["tag"] = prefix + t
+				follow(c)
+				deps = append(deps, c)
+			}
+		}
+	}
+	follow(main)
+	return main, deps, nil
+}
+
+func str(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+// isCatchAll reports whether a rule matches everything (no conditions).
+func isCatchAll(r map[string]any) bool {
+	for k := range r {
+		switch k {
+		case "type", "outboundTag", "balancerTag", "ruleTag":
+		case "network":
+			n := str(r[k])
+			if n != "tcp,udp" && n != "udp,tcp" {
+				return false
+			}
+		case "port":
+			if p := str(r[k]); p != "0-65535" && p != "1-65535" {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}

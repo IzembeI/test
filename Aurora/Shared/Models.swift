@@ -319,6 +319,10 @@ struct AppSettings: Codable, Hashable {
     var routingID: UUID?
     var autoSelect = false
     var autoSelectGroupID: UUID?
+    var autopilotAllGroups = true
+    var autopilotNetworkAware = true
+    var autopilotPoolSize = 6
+    var autopilotScanOnOpen = true
     // Tunnel
     var mtu = 9000
     var bufferKB = 64
@@ -380,6 +384,9 @@ struct TunnelStats: Codable {
     var directDown: Int64 = 0
     var uptime: Int64 = 0
     var memory: UInt64 = 0
+    var best: String?
+    var bestName: String?
+    var network: String?
 }
 
 /// Everything the tunnel needs to start, saved in the VPN configuration.
@@ -399,6 +406,11 @@ struct TunnelPayload: Codable {
     var subscriptionTotal: Int64 = 0
     var subscriptionUsed: Int64 = 0
     var subscriptionExpire: Date?
+    // Autopilot: options and member names for each kind of network.
+    var optionsWifi: String?
+    var optionsCellular: String?
+    var namesWifi: [String: String]?
+    var namesCellular: [String: String]?
 }
 
 enum TunnelCommand: String, Codable {

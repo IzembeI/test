@@ -15,6 +15,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private var restarting = false
     private let queue = DispatchQueue(label: "aurora.tunnel")
     private var stoppingByUser = false
+    private var netKind = "other"
+    private var lastBest: String?
 
     // MARK: Start
 
@@ -66,8 +68,25 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         return NSError(domain: "Aurora", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
+    /// Autopilot payloads carry a server set per network kind.
+    private func options(_ p: TunnelPayload) -> String {
+        switch netKind {
+        case "wifi": return p.optionsWifi ?? p.options
+        case "cellular": return p.optionsCellular ?? p.options
+        default: return p.options
+        }
+    }
+
+    private func names(_ p: TunnelPayload) -> [String: String] {
+        switch netKind {
+        case "wifi": return p.namesWifi ?? p.groupNames
+        case "cellular": return p.namesCellular ?? p.groupNames
+        default: return p.groupNames
+        }
+    }
+
     private func makeConfig(_ p: TunnelPayload) -> Result<String, CoreError> {
-        guard var opts = JSON.object(p.options) else { return .failure(CoreError("Повреждённые настройки")) }
+        guard var opts = JSON.object(options(p)) else { return .failure(CoreError("Повреждённые настройки")) }
         opts["assetDir"] = Storage.geoDir.path
         opts["logDir"] = Storage.logDir.path
         opts["tun"] = true
@@ -192,6 +211,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private func pathChanged(_ path: Network.NWPath) {
         let d = describe(path)
         defer { lastPath = d }
+        if lastPath == nil {
+            netKind = path.usesInterfaceType(.wifi) ? "wifi" : (path.usesInterfaceType(.cellular) ? "cellular" : "other")
+        }
         guard let last = lastPath, last != d, let p = payload else { return }
         Log.write("network: \(last) -> \(d)")
         if path.status != .satisfied {
@@ -201,6 +223,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         if p.notifications.onNetworkChange {
             let label = path.usesInterfaceType(.wifi) ? "Wi‑Fi" : (path.usesInterfaceType(.cellular) ? "сотовая сеть" : "сеть")
             Notifier.post(.networkChanged, title: "Сеть сменилась", body: "Теперь: \(label)", settings: p.notifications, id: "net-change")
+        }
+        let kind = path.usesInterfaceType(.wifi) ? "wifi" : (path.usesInterfaceType(.cellular) ? "cellular" : "other")
+        let kindChanged = kind != netKind
+        netKind = kind
+        if kindChanged, p.optionsWifi != nil, case .success(let cfg) = makeConfig(p) {
+            // Autopilot: the server set for the new network.
+            config = cfg
+            lastBest = nil
+            restartCore(reason: kind == "cellular" ? "сотовая сеть — серверы для мобильного интернета" : "Wi‑Fi — серверы для Wi‑Fi")
+            return
         }
         if p.reconnectOnNetworkChange { restartCore(reason: "смена сети") }
     }
@@ -225,6 +257,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private func tick() {
         guard let p = payload else { return }
         let st = Core.stats()
+        if let best = st.best, best != lastBest {
+            if lastBest != nil, p.notifications.onServerSwitch {
+                let name = names(p)[best] ?? best
+                Notifier.post(.serverSwitched, title: "Автопилот сменил сервер",
+                              body: p.notifications.showServerName ? name : "Переключено на более быстрый сервер",
+                              settings: p.notifications, id: "autopilot")
+            }
+            Log.write("autopilot: best = \(names(p)[best] ?? best)")
+            lastBest = best
+        }
         if p.memoryLimitMB > 0, st.memory > UInt64(p.memoryLimitMB) * 1024 * 1024 * 9 / 10 { Core.freeMemory() }
         if p.notifications.trafficCap, !capWarned {
             let used = st.up + st.down
@@ -305,7 +347,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         switch req.command {
         case .stats:
-            completionHandler?(try? JSONEncoder().encode(Core.stats()))
+            var st = Core.stats()
+            if let p = payload, let best = st.best { st.bestName = names(p)[best] }
+            st.network = netKind
+            completionHandler?(try? JSONEncoder().encode(st))
         case .status:
             completionHandler?("\(Core.isRunning ? "running" : "stopped")|\(payload?.serverName ?? "")".data(using: .utf8))
         case .logs:
