@@ -131,7 +131,8 @@ final class AppModel: ObservableObject {
         var o: [String: Any] = [
             "mode": s.mode.rawValue, "tun": true, "mtu": s.mtu, "sniffing": s.sniffing, "routeOnly": s.routeOnly,
             "ipv6": s.ipv6, "logLevel": s.logLevel, "stats": true, "socksPort": s.localSocksPort, "httpPort": s.localHTTPPort,
-            "lanShare": s.lanShare, "probeURL": s.pingURL, "probeMinutes": 3,
+            // The balancer checks its members every 45 s, so a dead server is left within a minute.
+            "lanShare": s.lanShare, "probeURL": s.pingURL, "probeMinutes": 3, "probeSeconds": 45,
             "apnsViaProxy": s.apnsViaProxy, "connIdle": s.connIdle, "useConfigDNS": s.useConfigDNS, "bufferKB": s.bufferKB,
             "dns": ["remote": r.remoteDNS, "direct": r.directDNS, "fakeDNS": r.fakeDNS, "hosts": r.hosts,
                     "strategy": s.ipv6 ? "UseIP" : "UseIPv4"] as [String: Any],
@@ -275,9 +276,18 @@ final class AppModel: ObservableObject {
         test(list)
     }
 
+    /// While the VPN is on, server tests go around the tunnel through the
+    /// physical interface; otherwise they would measure the path through the
+    /// current server. Not with Kill Switch: then nothing may bypass the tunnel.
+    private func routeTestsAroundTunnel() {
+        let bypass = vpn.isConnected && !settings.killSwitch
+        Core.setTestInterface(bypass ? autopilot.physicalInterface : nil)
+    }
+
     func test(_ list: [ServerNode]) {
         let ids = list.map(\.id)
         guard !ids.isEmpty else { return }
+        routeTestsAroundTunnel()
         testing.formUnion(ids)
         let method = settings.pingMethod
         let url = settings.pingURL
@@ -340,6 +350,7 @@ final class AppModel: ObservableObject {
         let all = autopilotScope
         guard !all.isEmpty else { toast = "Добавьте подписку — автопилоту не из чего выбирать"; return }
         autopilotBusy = true
+        routeTestsAroundTunnel()
         testing.formUnion(all.map(\.id))
         let url = settings.pingURL
         let timeout = settings.pingTimeoutMs

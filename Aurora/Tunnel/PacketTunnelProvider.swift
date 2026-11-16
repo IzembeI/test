@@ -17,6 +17,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private var stoppingByUser = false
     private var netKind = "other"
     private var lastBest: String?
+    private var lastSwitchNotice = Date.distantPast
+    /// Called once the first network path is known (or after a short wait).
+    private var onFirstPath: (() -> Void)?
+    /// True between a successful start and stop; path changes during the
+    /// start are not acted on.
+    private var live = false
 
     // MARK: Start
 
@@ -31,33 +37,59 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         payload = p
         Core.setMemoryLimit(p.memoryLimitMB)
 
-        prepareGeo(p) { [weak self] in
-            guard let self else { return }
-            switch self.makeConfig(p) {
-            case .failure(let e):
-                completionHandler(self.fail(e.message))
-            case .success(let cfg):
-                self.config = cfg
-                self.setTunnelNetworkSettings(self.networkSettings(p)) { error in
-                    if let error {
-                        completionHandler(self.fail("Сеть туннеля: \(error.localizedDescription)"))
-                        return
+        // The network comes first: with the autopilot, Wi‑Fi and cellular get
+        // different server sets, and a start by the system (On Demand, a
+        // network change) must pick the set for the network it starts on.
+        waitForNetwork { [weak self] in
+            self?.prepareGeo(p) { [weak self] in
+                guard let self else { return }
+                switch self.makeConfig(p) {
+                case .failure(let e):
+                    completionHandler(self.fail(e.message))
+                case .success(let cfg):
+                    self.config = cfg
+                    self.setTunnelNetworkSettings(self.networkSettings(p)) { error in
+                        if let error {
+                            completionHandler(self.fail("Сеть туннеля: \(error.localizedDescription)"))
+                            return
+                        }
+                        guard let fd = self.tunnelFD else {
+                            completionHandler(self.fail("Не найден дескриптор utun"))
+                            return
+                        }
+                        if let e = Core.start(config: cfg, tunFd: fd, assetDir: Storage.geoDir.path) {
+                            completionHandler(self.fail("Xray: \(e)"))
+                            return
+                        }
+                        self.startedAt = Date()
+                        Log.write("connected: \(p.serverName), network \(self.netKind), Xray \(Core.version)")
+                        completionHandler(nil)
+                        self.queue.async {
+                            self.live = true
+                            self.afterStart(p)
+                        }
                     }
-                    guard let fd = self.tunnelFD else {
-                        completionHandler(self.fail("Не найден дескриптор utun"))
-                        return
-                    }
-                    if let e = Core.start(config: cfg, tunFd: fd, assetDir: Storage.geoDir.path) {
-                        completionHandler(self.fail("Xray: \(e)"))
-                        return
-                    }
-                    self.startedAt = Date()
-                    Log.write("connected: \(p.serverName), Xray \(Core.version)")
-                    completionHandler(nil)
-                    self.afterStart(p)
                 }
             }
         }
+    }
+
+    private func waitForNetwork(_ done: @escaping () -> Void) {
+        queue.async {
+            self.onFirstPath = done
+            let monitor = NWPathMonitor()
+            monitor.pathUpdateHandler = { [weak self] path in self?.pathChanged(path) }
+            monitor.start(queue: self.queue)
+            self.pathMonitor = monitor
+            // Never hold the start for long if the path is slow to come.
+            self.queue.asyncAfter(deadline: .now() + 1) { self.firstPathReady() }
+        }
+    }
+
+    private func firstPathReady() {
+        let f = onFirstPath
+        onFirstPath = nil
+        f?()
     }
 
     private func fail(_ message: String) -> NSError {
@@ -188,11 +220,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     // MARK: Monitoring
 
     private func startMonitoring() {
-        let monitor = NWPathMonitor()
-        monitor.pathUpdateHandler = { [weak self] path in self?.pathChanged(path) }
-        monitor.start(queue: queue)
-        pathMonitor = monitor
-
+        if pathMonitor == nil {
+            let monitor = NWPathMonitor()
+            monitor.pathUpdateHandler = { [weak self] path in self?.pathChanged(path) }
+            monitor.start(queue: queue)
+            pathMonitor = monitor
+        }
+        timer?.cancel()
         let t = DispatchSource.makeTimerSource(queue: queue)
         t.schedule(deadline: .now() + 30, repeating: 30)
         t.setEventHandler { [weak self] in self?.tick() }
@@ -210,10 +244,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private func pathChanged(_ path: Network.NWPath) {
         let d = describe(path)
-        defer { lastPath = d }
         if lastPath == nil {
             netKind = path.usesInterfaceType(.wifi) ? "wifi" : (path.usesInterfaceType(.cellular) ? "cellular" : "other")
+            lastPath = d
+            firstPathReady()
+            return
         }
+        // Changes while the tunnel is still starting are compared against
+        // the first path once it is up.
+        guard live else { return }
+        defer { lastPath = d }
         guard let last = lastPath, last != d, let p = payload else { return }
         Log.write("network: \(last) -> \(d)")
         if path.status != .satisfied {
@@ -258,11 +298,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         guard let p = payload else { return }
         let st = Core.stats()
         if let best = st.best, best != lastBest {
-            if lastBest != nil, p.notifications.onServerSwitch {
-                let name = names(p)[best] ?? best
-                Notifier.post(.serverSwitched, title: "Автопилот сменил сервер",
-                              body: p.notifications.showServerName ? name : "Переключено на более быстрый сервер",
-                              settings: p.notifications, id: "autopilot")
+            if let previous = lastBest, p.notifications.onServerSwitch {
+                // Close servers trade first place often; that is worth a notice
+                // only every 10 minutes. A server that went down always is.
+                let previousDown = st.members?.first { $0.tag == previous }?.alive == false
+                if previousDown || Date().timeIntervalSince(lastSwitchNotice) > 600 {
+                    lastSwitchNotice = Date()
+                    let name = names(p)[best] ?? best
+                    Notifier.post(.serverSwitched, title: previousDown ? "Сервер перестал отвечать" : "Автопилот сменил сервер",
+                                  body: p.notifications.showServerName ? "Теперь: \(name)" : "Переключено на работающий сервер",
+                                  settings: p.notifications, id: "autopilot")
+                }
             }
             Log.write("autopilot: best = \(names(p)[best] ?? best)")
             lastBest = best
@@ -291,6 +337,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     // MARK: Stop
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
+        queue.sync { live = false; onFirstPath = nil }
         timer?.cancel(); timer = nil
         pathMonitor?.cancel(); pathMonitor = nil
         let st = Core.stats()

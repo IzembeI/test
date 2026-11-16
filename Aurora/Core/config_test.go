@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/xtls/xray-core/core"
 )
 
 func outboundsFrom(t *testing.T, links string) []map[string]any {
@@ -95,5 +97,53 @@ func TestAnalyze(t *testing.T) {
 	t.Log(a, b)
 	if a.Cellular <= b.Cellular || b.WiFi < 50 || a.DPI < 80 {
 		t.Fatal(a, b)
+	}
+}
+
+func TestTestInterfaceBinding(t *testing.T) {
+	SetTestInterface("en0")
+	defer SetTestInterface("")
+	ob := map[string]any{"protocol": "vless", "settings": map[string]any{"address": "1.2.3.4", "port": 443, "id": "b831381d-6324-4d53-ad4f-8cda48b30811", "encryption": "none"},
+		"streamSettings": map[string]any{"security": "tls", "sockopt": map[string]any{"dialerProxy": "frag"}}}
+	cfg := buildTestConfig([]map[string]any{ob}, []int{10999}, []bool{true})
+	if strings.Count(cfg, `"interface":"en0"`) != 2 {
+		t.Fatal("outbound and direct should be bound:", cfg)
+	}
+	if so := ob["streamSettings"].(map[string]any)["sockopt"].(map[string]any); so["dialerProxy"] != "frag" || so["interface"] != nil {
+		t.Fatal("caller's outbound was changed:", so)
+	}
+	if _, err := core.LoadConfig("json", strings.NewReader(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	full := `{"outbounds":[{"tag":"proxy","protocol":"vless","settings":{"address":"a.example.com","port":443,"id":"b831381d-6324-4d53-ad4f-8cda48b30811","encryption":"none"},"streamSettings":{"sockopt":{"dialerProxy":"frag"}}},{"tag":"frag","protocol":"freedom"},{"tag":"block","protocol":"blackhole"}]}`
+	w, err := wrapFullConfig(full, 10998)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the fragment hop dials on its own: it alone gets the interface.
+	if strings.Count(w, `"interface":"en0"`) != 1 || !strings.Contains(w, `"dialerProxy":"frag"`) {
+		t.Fatal(w)
+	}
+}
+
+func TestProbeInterval(t *testing.T) {
+	obs := outboundsFrom(t, "trojan://pw@a.example.com:443?security=tls#A\ntrojan://pw@b.example.com:443?security=tls#B")
+	for _, c := range []struct {
+		o    buildOptions
+		want string
+	}{
+		{buildOptions{Outbounds: obs, Mode: "global"}, `"probeInterval": "3m"`},
+		{buildOptions{Outbounds: obs, Mode: "global", ProbeMin: 5}, `"probeInterval": "5m"`},
+		{buildOptions{Outbounds: obs, Mode: "global", ProbeMin: 5, ProbeSec: 45}, `"probeInterval": "45s"`},
+		{buildOptions{Outbounds: obs, Mode: "global", ProbeSec: 3}, `"probeInterval": "15s"`},
+	} {
+		b, _ := json.Marshal(c.o)
+		out := BuildConfig(string(b))
+		if !strings.Contains(out, c.want) {
+			t.Fatal(c.want, out)
+		}
+		if e := Validate(out); e != "" {
+			t.Fatal(e)
+		}
 	}
 }

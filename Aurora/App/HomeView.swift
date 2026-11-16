@@ -152,8 +152,13 @@ struct HomeView: View {
                 } else if let top = pool.first {
                     Label("Лучший: \(top.flag.isEmpty ? "" : top.flag + " ")\(top.displayName)", systemImage: "star").font(.subheadline)
                 }
-                Text("В наборе \(pool.count) из \(model.autopilotScope.count): ядро само переключается на живой и быстрый.")
-                    .font(.caption).foregroundStyle(.secondary)
+                if vpn.isConnected, let c = model.stats.aliveCount {
+                    Text("В наборе \(c.total) из \(model.autopilotScope.count), отвечают \(c.alive). Проверка каждые 45 с, ядро само уходит с упавшего.")
+                        .font(.caption).foregroundStyle(c.alive == 0 ? Color.red : .secondary)
+                } else {
+                    Text("В наборе \(pool.count) из \(model.autopilotScope.count): ядро само переключается на живой и быстрый.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 HStack {
                     Button {
                         model.autopilotScan()

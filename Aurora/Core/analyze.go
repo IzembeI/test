@@ -61,9 +61,6 @@ func Analyze(itemJSON string) string {
 			return `{"cellular":0,"wifi":0,"dpi":0,"traits":[],"notes":["в конфиге нет прокси-подключения"]}`
 		}
 		ob, deps = m, d
-		if strings.Contains(it.Config, `"balancers"`) {
-			// A provider-side balancer: several servers behind one entry.
-		}
 	}
 	a := analyzeOutbound(ob, deps, it.Name, it.Config)
 	b, _ := json.Marshal(a)
@@ -85,8 +82,10 @@ func analyzeOutbound(ob map[string]any, deps []map[string]any, name string, rawC
 	security := strings.ToLower(str(ss["security"]))
 	host, port := outboundEndpoint(ob)
 	sni := ""
+	fingerprint := ""
 	if t, ok := ss["tlsSettings"].(map[string]any); ok {
 		sni = strings.ToLower(str(t["serverName"]))
+		fingerprint = str(t["fingerprint"])
 	}
 	if r, ok := ss["realitySettings"].(map[string]any); ok {
 		sni = strings.ToLower(str(r["serverName"]))
@@ -159,6 +158,11 @@ func analyzeOutbound(ob map[string]any, deps []map[string]any, name string, rawC
 	case "tls":
 		dpi += 15
 		trait("TLS")
+		// An empty fingerprint means Chrome in Xray; only plain Go TLS stands out.
+		if strings.EqualFold(fingerprint, "golang") && proto != "hysteria" {
+			dpi -= 10
+			note("TLS с отпечатком golang: рукопожатие не похоже на браузер, DPI может его узнать.")
+		}
 	default:
 		if proto != "hysteria" && proto != "wireguard" && !strings.HasPrefix(proto, "shadowsocks") {
 			dpi -= 25

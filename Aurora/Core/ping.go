@@ -14,6 +14,48 @@ import (
 	"github.com/xtls/xray-core/core"
 )
 
+var (
+	testIfaceMu sync.RWMutex
+	testIface   string
+)
+
+// SetTestInterface makes server tests leave through this network interface
+// (en0 for Wi-Fi, pdp_ip0 for cellular) instead of the default route. While
+// the VPN is on, the default route is the tunnel itself, so without this a
+// test would measure "through the current server" and could call a server
+// alive that is not reachable directly. An empty name restores the default.
+func SetTestInterface(name string) {
+	testIfaceMu.Lock()
+	testIface = strings.TrimSpace(name)
+	testIfaceMu.Unlock()
+}
+
+func currentTestInterface() string {
+	testIfaceMu.RLock()
+	defer testIfaceMu.RUnlock()
+	return testIface
+}
+
+// bindToInterface sets sockopt.interface on an outbound that dials on its
+// own. Outbounds that dial through another one (dialerProxy) are left alone:
+// the one they dial through is bound instead.
+func bindToInterface(ob map[string]any, iface string) {
+	if iface == "" || ob == nil {
+		return
+	}
+	switch str(ob["protocol"]) {
+	case "blackhole", "dns", "loopback":
+		return
+	}
+	so := sockoptOf(ob)
+	if _, chained := so["dialerProxy"]; chained {
+		return
+	}
+	if _, set := so["interface"]; !set {
+		so["interface"] = iface
+	}
+}
+
 // TCPPing measures the time to open a TCP connection, in milliseconds,
 // or -1 when it fails.
 func TCPPing(host string, port int, timeoutMs int) int {
@@ -21,7 +63,8 @@ func TCPPing(host string, port int, timeoutMs int) int {
 		timeoutMs = 3000
 	}
 	start := time.Now()
-	c, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), time.Duration(timeoutMs)*time.Millisecond)
+	d := net.Dialer{Timeout: time.Duration(timeoutMs) * time.Millisecond, Control: interfaceControl(currentTestInterface())}
+	c, err := d.Dial("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
 		return -1
 	}
@@ -147,15 +190,14 @@ func buildTestConfig(outbounds []map[string]any, ports []int, usable []bool) str
 	inbounds := []map[string]any{}
 	outs := []map[string]any{}
 	rules := []map[string]any{}
+	iface := currentTestInterface()
 	for i, ob := range outbounds {
 		if !usable[i] {
 			continue
 		}
 		tag := "t" + strconv.Itoa(i)
-		copyOb := map[string]any{}
-		for k, v := range ob {
-			copyOb[k] = v
-		}
+		// A deep copy, so the caller's outbound stays as it was.
+		copyOb := clone(ob)
 		copyOb["tag"] = tag
 		// Chained outbounds (dialerProxy) are not supported in a test.
 		if ss, ok := copyOb["streamSettings"].(map[string]any); ok {
@@ -163,6 +205,7 @@ func buildTestConfig(outbounds []map[string]any, ports []int, usable []bool) str
 				delete(so, "dialerProxy")
 			}
 		}
+		bindToInterface(copyOb, iface)
 		outs = append(outs, copyOb)
 		inbounds = append(inbounds, map[string]any{
 			"tag": "in" + strconv.Itoa(i), "listen": "127.0.0.1", "port": ports[i], "protocol": "socks",
@@ -170,7 +213,9 @@ func buildTestConfig(outbounds []map[string]any, ports []int, usable []bool) str
 		})
 		rules = append(rules, map[string]any{"type": "field", "inboundTag": []string{"in" + strconv.Itoa(i)}, "outboundTag": tag})
 	}
-	outs = append(outs, map[string]any{"tag": "direct", "protocol": "freedom"})
+	direct := map[string]any{"tag": "direct", "protocol": "freedom"}
+	bindToInterface(direct, iface)
+	outs = append(outs, direct)
 	cfg := map[string]any{
 		"log":       map[string]any{"loglevel": "none"},
 		"inbounds":  inbounds,
@@ -305,6 +350,15 @@ func wrapFullConfig(raw string, port int) (string, error) {
 	cfg["log"] = map[string]any{"loglevel": "none"}
 	for _, k := range []string{"api", "stats", "metrics", "reverse"} {
 		delete(cfg, k)
+	}
+	if iface := currentTestInterface(); iface != "" {
+		if obs, ok := cfg["outbounds"].([]any); ok {
+			for _, o := range obs {
+				if m, ok := o.(map[string]any); ok {
+					bindToInterface(m, iface)
+				}
+			}
+		}
 	}
 	// Rules bound to inbound tags of the original config would never match
 	// the test inbound; keep them, they are harmless.

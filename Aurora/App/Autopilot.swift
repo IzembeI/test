@@ -50,6 +50,9 @@ struct HealthRecord: Codable {
 @MainActor
 final class Autopilot: ObservableObject {
     @Published private(set) var network: NetKind = .other
+    /// The physical interface under the current path (en0, pdp_ip0), so
+    /// server tests can go around the tunnel while the VPN is on.
+    private(set) var physicalInterface: String?
     @Published private(set) var whitelist: Bool?
     @Published private(set) var lastProbe: Date?
     private(set) var health: [String: HealthRecord]
@@ -80,10 +83,14 @@ final class Autopilot: ObservableObject {
         health = Storage.load([String: HealthRecord].self, "health") ?? [:]
         monitor.pathUpdateHandler = { [weak self] path in
             let kind: NetKind = path.usesInterfaceType(.wifi) ? .wifi : (path.usesInterfaceType(.cellular) ? .cellular : .other)
+            let physical = path.availableInterfaces.first { $0.type == .wifi || $0.type == .cellular || $0.type == .wiredEthernet }?.name
             Task { @MainActor in
                 guard let self else { return }
                 let changed = self.network != kind
                 self.network = kind
+                // With the VPN up the path may list only the tunnel; the usual
+                // names of the Wi‑Fi and cellular interfaces stand in then.
+                self.physicalInterface = physical ?? (kind == .wifi ? "en0" : (kind == .cellular ? "pdp_ip0" : nil))
                 if changed {
                     self.whitelist = nil
                     self.onNetworkChange?(kind)

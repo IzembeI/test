@@ -37,6 +37,9 @@ type buildOptions struct {
 	Fragment  fragmentOptions  `json:"fragment"`
 	Mux       muxOptions       `json:"mux"`
 	Stats     bool             `json:"stats"`
+	// ProbeSec, when set, wins over ProbeMin: how often the balancer checks
+	// its members. Short means a dead server is left within a minute.
+	ProbeSec int `json:"probeSeconds"`
 	// APNsViaProxy sends Apple push traffic through the proxy before any other
 	// rule, so profiles that route Apple directly cannot break notifications.
 	APNsViaProxy bool `json:"apnsViaProxy"`
@@ -470,11 +473,17 @@ func buildConfig(o buildOptions) (map[string]any, error) {
 		if probe == "" {
 			probe = "https://www.gstatic.com/generate_204"
 		}
-		mins := o.ProbeMin
-		if mins <= 0 {
-			mins = 3
+		interval := ""
+		switch {
+		case o.ProbeSec > 0:
+			// Below 15 s the probes themselves start to cost traffic and battery.
+			interval = itoa(max(15, o.ProbeSec)) + "s"
+		case o.ProbeMin > 0:
+			interval = itoa(o.ProbeMin) + "m"
+		default:
+			interval = "3m"
 		}
-		cfg["observatory"] = map[string]any{"subjectSelector": []string{"proxy-"}, "probeURL": probe, "probeInterval": itoa(mins) + "m", "enableConcurrency": true}
+		cfg["observatory"] = map[string]any{"subjectSelector": []string{"proxy-"}, "probeURL": probe, "probeInterval": interval, "enableConcurrency": true}
 	}
 	cfg["routing"] = routing
 	dns := dnsSection(o, geosite)

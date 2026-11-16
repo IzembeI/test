@@ -387,6 +387,20 @@ struct TunnelStats: Codable {
     var best: String?
     var bestName: String?
     var network: String?
+    /// Balancer members as the core's observatory last saw them.
+    var members: [Member]?
+
+    struct Member: Codable {
+        var tag: String
+        var alive: Bool
+        var delay: Int64
+    }
+
+    /// Alive and total members of the autopilot pool; nil without a balancer.
+    var aliveCount: (alive: Int, total: Int)? {
+        guard let m = members, !m.isEmpty else { return nil }
+        return (m.filter(\.alive).count, m.count)
+    }
 }
 
 /// Everything the tunnel needs to start, saved in the VPN configuration.

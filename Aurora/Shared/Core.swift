@@ -91,6 +91,11 @@ enum Core {
         return try? JSONDecoder().decode(Analysis.self, from: d)
     }
 
+    /// Server tests leave through this interface (en0, pdp_ip0) instead of
+    /// the default route, which is the tunnel itself while the VPN is on.
+    /// nil restores the default route.
+    static func setTestInterface(_ name: String?) { CorebridgeSetTestInterface(name ?? "") }
+
     static func tcpPing(host: String, port: Int, timeoutMs: Int) -> Int {
         CorebridgeTCPPing(host, port, timeoutMs)
     }
