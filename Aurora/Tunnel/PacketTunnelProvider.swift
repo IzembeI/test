@@ -181,7 +181,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         timer = t
     }
 
-    private func describe(_ path: NWPath) -> String {
+    private func describe(_ path: Network.NWPath) -> String {
         var kind = "none"
         if path.usesInterfaceType(.wifi) { kind = "wifi" }
         else if path.usesInterfaceType(.cellular) { kind = "cellular" }
@@ -189,7 +189,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         return "\(path.status == .satisfied ? "up" : "down")-\(kind)"
     }
 
-    private func pathChanged(_ path: NWPath) {
+    private func pathChanged(_ path: Network.NWPath) {
         let d = describe(path)
         defer { lastPath = d }
         guard let last = lastPath, last != d, let p = payload else { return }
