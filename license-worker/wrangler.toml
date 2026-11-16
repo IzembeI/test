@@ -1,0 +1,11 @@
+name = "aurora-license"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+
+# Created with: npx wrangler kv namespace create LICENSES
+# Put the id it prints here.
+[[kv_namespaces]]
+binding = "LICENSES"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# Secrets (never in this file): npx wrangler secret put SERVER_PRIVATE_KEY / ADMIN_TOKEN
