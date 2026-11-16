@@ -88,6 +88,8 @@ struct SettingsView: View {
 struct NotificationSettingsView: View {
     @EnvironmentObject var model: AppModel
     @State private var auth: UNAuthorizationStatus = .notDetermined
+    @State private var pushChecks: [AppModel.PushCheck] = []
+    @State private var checking = false
 
     private var n: Binding<NotificationSettings> {
         Binding(get: { model.settings.notifications }, set: {
@@ -117,6 +119,44 @@ struct NotificationSettingsView: View {
                 Text("Уведомления отправляются локально: из приложения и прямо из VPN-расширения, даже когда приложение закрыто. Никаких push-серверов.")
             }
 
+            // Push of the other apps: independent of Aurora's own notifications.
+            Section {
+                Toggle("Push-уведомления через VPN", isOn: Binding(get: { !model.settings.excludeAPNs }, set: { model.settings.excludeAPNs = !$0 }))
+                Toggle("Сервис push Apple всегда через прокси", isOn: $model.settings.apnsViaProxy)
+                Button { model.applyWhitelistPreset() } label: {
+                    Label("Режим белых списков", systemImage: "checklist")
+                }
+                Button {
+                    checking = true
+                    Task {
+                        pushChecks = await model.checkPush()
+                        checking = false
+                    }
+                } label: {
+                    HStack {
+                        Label("Проверить доставку push", systemImage: "bell.badge")
+                        if checking { Spacer(); ProgressView() }
+                    }
+                }
+                .disabled(checking)
+                ForEach(pushChecks) { c in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label(c.title, systemImage: c.ok ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                            .foregroundStyle(c.ok ? Color.green : Color.red)
+                        Text(c.detail).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if pushChecks.contains(where: { !$0.ok }) {
+                    Button { model.applyWhitelistPreset(); pushChecks = [] } label: {
+                        Label("Исправить всё разом", systemImage: "wand.and.stars")
+                    }
+                }
+            } header: {
+                Text("Push от всех приложений")
+            } footer: {
+                Text("Push от Telegram, банков и других приложений идут через сервис Apple (APNs). При белых списках они приходят, только пока VPN включён и APNs идёт через сервер: так по умолчанию. «Режим белых списков» включает всё нужное разом, включая автоподключение VPN, и выбирает самый быстрый сервер РФ. Ядро замечает оборванную связь с сервером примерно за 2 минуты, и iOS сразу переподключает push.")
+            }
+
             if model.settings.notifications.enabled {
                 Section {
                     Toggle("Звук", isOn: n.sound)
@@ -129,18 +169,6 @@ struct NotificationSettingsView: View {
                     Text("Как показывать")
                 } footer: {
                     Text("«Тихо» — без баннера, только в Центре уведомлений. «Важно» — срочные (разрыв, конец подписки) проходят сквозь режим фокусировки, если iOS это разрешит.")
-                }
-
-                Section {
-                    Toggle("Push-уведомления через VPN", isOn: Binding(get: { !model.settings.excludeAPNs }, set: { model.settings.excludeAPNs = !$0 }))
-                    Toggle("Сервис push Apple всегда через прокси", isOn: $model.settings.apnsViaProxy)
-                    Button { model.applyWhitelistPreset() } label: {
-                        Label("Режим белых списков", systemImage: "checklist")
-                    }
-                } header: {
-                    Text("Push при мобильных ограничениях")
-                } footer: {
-                    Text("Когда мобильный интернет работает только по «белым спискам», push-уведомления надёжнее всего приходят, если: сервис APNs не исключён из VPN, подключён сервер в РФ, а DNS берётся из JSON-конфига. «Режим белых списков» включает всё это разом и выбирает самый быстрый сервер РФ.")
                 }
 
                 Section("Подключение") {

@@ -362,6 +362,9 @@ func buildConfig(o buildOptions) (map[string]any, error) {
 			if _, set := so["domainStrategy"]; !set {
 				so["domainStrategy"] = resolve
 			}
+			if !isUDPOnly(m) {
+				fastDeadLink(so)
+			}
 		}
 	}
 
@@ -657,6 +660,25 @@ func buildFromRaw(o buildOptions) (map[string]any, error) {
 	if o.TUN {
 		rules = append([]any{map[string]any{"type": "field", "inboundTag": []string{"tun"}, "port": "53", "outboundTag": "dns-out"}}, rules...)
 	}
+	// Push and dead-link settings apply to a full config as well: Apple push
+	// goes through the config's own proxy before its other rules.
+	if key, target := rawProxyTarget(cfg); o.APNsViaProxy && key != "" {
+		apns := []any{
+			map[string]any{"type": "field", "domain": apnsDomains, key: target},
+			map[string]any{"type": "field", "ip": []string{"17.0.0.0/8"}, "port": "5223,2197", key: target},
+		}
+		at := 0
+		if o.TUN {
+			at = 1 // after the DNS rule
+		}
+		rules = append(rules[:at], append(apns, rules[at:]...)...)
+	}
+	for _, ob := range outbounds {
+		if m, ok := ob.(map[string]any); ok && !nonProxy[str(m["protocol"])] && !isUDPOnly(m) {
+			fastDeadLink(sockoptOf(m))
+		}
+	}
+	mergePolicyLevel(cfg, o)
 	routing["rules"] = rules
 	cfg["routing"] = routing
 	if _, ok := cfg["dns"]; !ok || !o.UseConfigDNS {
@@ -675,6 +697,98 @@ func buildFromRaw(o buildOptions) (map[string]any, error) {
 		cfg["policy"] = policy
 	}
 	return cfg, nil
+}
+
+// fastDeadLink makes a dead link to the server show in about two minutes
+// instead of six. Xray probes an idle connection after 45 s and then every
+// 45 s; probes 10 s apart close a dead one sooner, so apps and the iOS push
+// service reconnect sooner. A healthy link sees no extra traffic: the
+// interval only applies once a probe goes unanswered.
+func fastDeadLink(so map[string]any) {
+	_, idle := so["tcpKeepAliveIdle"]
+	_, interval := so["tcpKeepAliveInterval"]
+	if idle || interval {
+		return
+	}
+	so["tcpKeepAliveIdle"] = 45
+	so["tcpKeepAliveInterval"] = 10
+}
+
+// rawProxyTarget finds where a full config sends traffic by default: the
+// outbound or balancer of its last catch-all rule, else its first proxy
+// outbound. key is "outboundTag" or "balancerTag", empty when none.
+func rawProxyTarget(cfg map[string]any) (key, target string) {
+	outbounds, _ := cfg["outbounds"].([]any)
+	proxyTag := map[string]bool{}
+	first := ""
+	for _, ob := range outbounds {
+		m, _ := ob.(map[string]any)
+		if m == nil || nonProxy[str(m["protocol"])] {
+			continue
+		}
+		t := str(m["tag"])
+		if t == "" && first == "" {
+			// Untagged, so no rule could name it: give it a tag.
+			t = "aurora-proxy"
+			m["tag"] = t
+		}
+		if t != "" {
+			proxyTag[t] = true
+			if first == "" {
+				first = t
+			}
+		}
+	}
+	if routing, ok := cfg["routing"].(map[string]any); ok {
+		rules, _ := routing["rules"].([]any)
+		for _, r := range rules {
+			rm, _ := r.(map[string]any)
+			if rm == nil || !isCatchAll(rm) {
+				continue
+			}
+			if b := str(rm["balancerTag"]); b != "" {
+				key, target = "balancerTag", b
+			} else if t := str(rm["outboundTag"]); proxyTag[t] {
+				key, target = "outboundTag", t
+			}
+		}
+	}
+	if key == "" && first != "" {
+		key, target = "outboundTag", first
+	}
+	return key, target
+}
+
+// mergePolicyLevel brings the app's connection policy into a full config:
+// the longer idle time (push connections stay idle for long) and the buffer
+// size, without overriding what the config sets itself.
+func mergePolicyLevel(cfg map[string]any, o buildOptions) {
+	policy, _ := cfg["policy"].(map[string]any)
+	if policy == nil {
+		policy = map[string]any{}
+	}
+	levels, _ := policy["levels"].(map[string]any)
+	if levels == nil {
+		levels = map[string]any{}
+	}
+	l0, _ := levels["0"].(map[string]any)
+	if l0 == nil {
+		l0 = map[string]any{}
+	}
+	for k, v := range policyLevel(o)["0"].(map[string]any) {
+		cur, set := l0[k]
+		switch {
+		case !set:
+			l0[k] = v
+		case k == "connIdle":
+			if n, ok := cur.(float64); ok && float64(v.(int)) > n {
+				l0[k] = v
+			}
+		}
+	}
+	levels["0"] = l0
+	policy["levels"] = levels
+	cfg["policy"] = policy
 }
 
 func itoa(i int) string { return strconv.Itoa(i) }

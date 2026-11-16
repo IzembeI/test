@@ -147,3 +147,55 @@ func TestProbeInterval(t *testing.T) {
 		}
 	}
 }
+
+func TestRawConfigGetsPushSettings(t *testing.T) {
+	raw := `{"outbounds":[{"tag":"direct","protocol":"freedom"},{"tag":"main","protocol":"trojan","settings":{"address":"1.2.3.4","port":443,"password":"p"},"streamSettings":{"security":"tls"}}],"routing":{"rules":[{"type":"field","domain":["domain:example.org"],"outboundTag":"direct"},{"type":"field","network":"tcp,udp","outboundTag":"main"}]},"policy":{"levels":{"0":{"connIdle":120,"handshake":8}}}}`
+	b, _ := json.Marshal(buildOptions{RawConfig: raw, TUN: true, APNsViaProxy: true, ConnIdle: 1800, BufferKB: 64, Stats: true})
+	out := BuildConfig(string(b))
+	if strings.HasPrefix(out, "error:") {
+		t.Fatal(out)
+	}
+	if e := Validate(out); e != "" {
+		t.Fatal(e, out)
+	}
+	var cfg struct {
+		Routing struct {
+			Rules []map[string]any `json:"rules"`
+		} `json:"routing"`
+		Outbounds []map[string]any `json:"outbounds"`
+		Policy    struct {
+			Levels map[string]map[string]any `json:"levels"`
+		} `json:"policy"`
+	}
+	if err := json.Unmarshal([]byte(out), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	r := cfg.Routing.Rules
+	if len(r) < 4 || r[0]["outboundTag"] != "dns-out" || r[1]["outboundTag"] != "main" || r[2]["outboundTag"] != "main" || r[1]["domain"] == nil {
+		t.Fatal("APNs rules should follow the DNS rule and use the config's proxy:", r)
+	}
+	l0 := cfg.Policy.Levels["0"]
+	if l0["connIdle"] != float64(1800) || l0["handshake"] != float64(8) || l0["bufferSize"] != float64(64) {
+		t.Fatal("policy:", l0)
+	}
+	for _, ob := range cfg.Outbounds {
+		ss, _ := ob["streamSettings"].(map[string]any)
+		so, _ := ss["sockopt"].(map[string]any)
+		if ob["tag"] == "main" && so["tcpKeepAliveInterval"] != float64(10) {
+			t.Fatal("keepalive on the proxy:", ob)
+		}
+		if ob["tag"] == "direct" && so != nil {
+			t.Fatal("direct should be left alone:", ob)
+		}
+	}
+	// A balancer in the config is the push target.
+	bal := `{"outbounds":[{"tag":"a","protocol":"trojan","settings":{"address":"1.2.3.4","port":443,"password":"p"},"streamSettings":{"security":"tls"}},{"tag":"b","protocol":"trojan","settings":{"address":"5.6.7.8","port":443,"password":"p"},"streamSettings":{"security":"tls"}}],"routing":{"balancers":[{"tag":"lb","selector":["a","b"]}],"rules":[{"type":"field","network":"tcp,udp","balancerTag":"lb"}]}}`
+	b, _ = json.Marshal(buildOptions{RawConfig: bal, TUN: true, APNsViaProxy: true})
+	out = BuildConfig(string(b))
+	if !strings.Contains(out, `"balancerTag": "lb"`) || strings.Count(out, `"balancerTag": "lb"`) != 3 {
+		t.Fatal(out)
+	}
+	if e := Validate(out); e != "" {
+		t.Fatal(e)
+	}
+}

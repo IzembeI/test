@@ -418,6 +418,11 @@ final class AppModel: ObservableObject {
         settings.useConfigDNS = true
         settings.connIdle = max(settings.connIdle, 1800)
         settings.reconnectOnNetworkChange = true
+        // Push only arrives while the VPN is up: if iOS unloads the tunnel or
+        // the phone restarts, On Demand brings it back without the app.
+        settings.onDemand = true
+        settings.onDemandWiFi = true
+        settings.onDemandCellular = true
         let ru = servers.filter(Self.isRussian)
         if ru.isEmpty {
             toast = "Режим белых списков включён. Серверов РФ в списке не найдено — выберите сервер в РФ вручную."
@@ -435,6 +440,52 @@ final class AppModel: ObservableObject {
                 try? vpn.start()
             }
         }
+    }
+
+    struct PushCheck: Identifiable {
+        let id = UUID()
+        var title: String
+        var ok: Bool
+        var detail: String
+    }
+
+    /// What decides whether push notifications of other apps reach the
+    /// phone through the VPN, checked one by one.
+    func checkPush() async -> [PushCheck] {
+        var r: [PushCheck] = []
+        let s = settings
+        r.append(PushCheck(title: "VPN включён", ok: vpn.isConnected,
+                           detail: vpn.isConnected ? "Push идут через туннель." : "При белых списках без VPN push от зарубежных сервисов не доходят."))
+        r.append(PushCheck(title: "Автоподключение", ok: s.onDemand && s.onDemandWiFi && s.onDemandCellular,
+                           detail: s.onDemand ? "Если iOS выгрузит VPN или телефон перезагрузится, VPN вернётся сам." : "Выключено: если VPN упадёт, push перестанут приходить, пока вы не включите его вручную."))
+        let apnsIn = !(s.killSwitch && s.excludeAPNs)
+        r.append(PushCheck(title: "Push Apple через прокси", ok: apnsIn && s.apnsViaProxy,
+                           detail: !apnsIn ? "APNs исключён из VPN при Kill Switch — при белых списках не пройдёт." : (s.apnsViaProxy ? "Трафик push.apple.com идёт через сервер раньше остальных правил." : "Push могут уйти напрямую и упереться в белые списки.")))
+        r.append(PushCheck(title: "Долгий простой соединений", ok: s.connIdle >= 1800,
+                           detail: s.connIdle >= 1800 ? "Соединение push не рвётся ядром \(s.connIdle / 60) мин." : "Сейчас \(s.connIdle) с: соединение push рвётся раньше, push могут задерживаться."))
+        if vpn.isConnected, let c = stats.aliveCount {
+            r.append(PushCheck(title: "Серверы отвечают", ok: c.alive > 0, detail: "Отвечают \(c.alive) из \(c.total) в наборе автопилота."))
+        }
+        // The real route: Apple's push service through whatever path the
+        // phone uses right now (the tunnel when the VPN is on).
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 8
+        cfg.timeoutIntervalForResource = 10
+        let session = URLSession(configuration: cfg)
+        var req = URLRequest(url: URL(string: "https://api.push.apple.com/")!)
+        req.httpMethod = "HEAD"
+        let start = Date()
+        do {
+            let (_, resp) = try await session.data(for: req)
+            let ms = Int(Date().timeIntervalSince(start) * 1000)
+            r.append(PushCheck(title: "Связь с серверами push Apple", ok: resp is HTTPURLResponse,
+                               detail: "Ответили за \(ms) мс\(vpn.isConnected ? " через VPN" : " напрямую")."))
+        } catch {
+            r.append(PushCheck(title: "Связь с серверами push Apple", ok: false,
+                               detail: "Нет ответа\(vpn.isConnected ? " через VPN" : " напрямую"): \(error.localizedDescription)"))
+        }
+        session.invalidateAndCancel()
+        return r
     }
 
     /// Full check of the signature: saves the VPN profile, starts the tunnel

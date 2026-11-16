@@ -23,6 +23,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// True between a successful start and stop; path changes during the
     /// start are not acted on.
     private var live = false
+    /// Autopilot: a server set used instead of the one for the current
+    /// network, after every server of that one stopped answering.
+    private var kindOverride: String?
+    private var deadTicks = 0
+    private var outageNoticed = false
 
     // MARK: Start
 
@@ -102,7 +107,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     /// Autopilot payloads carry a server set per network kind.
     private func options(_ p: TunnelPayload) -> String {
-        switch netKind {
+        switch kindOverride ?? netKind {
         case "wifi": return p.optionsWifi ?? p.options
         case "cellular": return p.optionsCellular ?? p.options
         default: return p.options
@@ -110,7 +115,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func names(_ p: TunnelPayload) -> [String: String] {
-        switch netKind {
+        switch kindOverride ?? netKind {
         case "wifi": return p.namesWifi ?? p.groupNames
         case "cellular": return p.namesCellular ?? p.groupNames
         default: return p.groupNames
@@ -267,6 +272,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         let kind = path.usesInterfaceType(.wifi) ? "wifi" : (path.usesInterfaceType(.cellular) ? "cellular" : "other")
         let kindChanged = kind != netKind
         netKind = kind
+        if kindChanged {
+            // A new network gets its own set again; the fallback was for the old one.
+            kindOverride = nil
+            deadTicks = 0
+        }
         if kindChanged, p.optionsWifi != nil, case .success(let cfg) = makeConfig(p) {
             // Autopilot: the server set for the new network.
             config = cfg
@@ -313,6 +323,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             Log.write("autopilot: best = \(names(p)[best] ?? best)")
             lastBest = best
         }
+        watchPool(p, st)
         if p.memoryLimitMB > 0, st.memory > UInt64(p.memoryLimitMB) * 1024 * 1024 * 9 / 10 { Core.freeMemory() }
         if p.notifications.trafficCap, !capWarned {
             let used = st.up + st.down
@@ -331,6 +342,45 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         if !Core.isRunning, !restarting {
             restartCore(reason: "ядро остановилось")
+        }
+    }
+
+    /// When no server of the pool answers for about a minute, push and
+    /// everything else stop arriving. The autopilot then falls back to the
+    /// cellular set (servers for whitelisted mobile internet, which usually
+    /// get through anywhere); if that does not help either, the user is told.
+    private func watchPool(_ p: TunnelPayload, _ st: TunnelStats) {
+        // Without any network every server looks dead; that is not their fault.
+        guard let c = st.aliveCount, lastPath?.hasPrefix("up") == true else { return }
+        if c.alive > 0 {
+            if outageNoticed {
+                outageNoticed = false
+                Notifier.post(.reconnected, title: "Связь восстановлена",
+                              body: "Серверы снова отвечают, уведомления приложений доходят.", settings: p.notifications, id: "conn-state")
+            }
+            deadTicks = 0
+            return
+        }
+        deadTicks += 1
+        guard deadTicks >= 2 else { return }
+        deadTicks = 0
+        if p.optionsCellular != nil, kindOverride == nil, netKind != "cellular" {
+            kindOverride = "cellular"
+            if case .success(let cfg) = makeConfig(p) {
+                Log.write("autopilot: no server answers, falling back to the cellular set")
+                config = cfg
+                lastBest = nil
+                restartCore(reason: "ни один сервер не отвечал — запасной набор для мобильного интернета")
+                return
+            }
+            kindOverride = nil
+        }
+        if !outageNoticed {
+            outageNoticed = true
+            Log.write("autopilot: no server answers")
+            Notifier.post(.connectionLost, title: "Нет связи с серверами",
+                          body: "Ни один из \(c.total) серверов не отвечает. Уведомления приложений не дойдут, пока связь не вернётся. Откройте Aurora и нажмите «Проверить все серверы».",
+                          settings: p.notifications, id: "conn-state")
         }
     }
 
@@ -409,6 +459,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             if let d = req.payload, let p = try? JSONDecoder().decode(TunnelPayload.self, from: d) {
                 queue.async {
                     self.payload = p
+                    self.kindOverride = nil
                     if case .success(let cfg) = self.makeConfig(p) {
                         self.config = cfg
                         self.restartCore(reason: "смена сервера: \(p.serverName)")
