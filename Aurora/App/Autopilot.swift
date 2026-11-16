@@ -54,6 +54,8 @@ final class Autopilot: ObservableObject {
     /// server tests can go around the tunnel while the VPN is on.
     private(set) var physicalInterface: String?
     @Published private(set) var whitelist: Bool?
+    @Published private(set) var netClass: Core.NetClass?
+    private var pendingClass: String?
     @Published private(set) var lastProbe: Date?
     private(set) var health: [String: HealthRecord]
     private var analyses: [String: Core.Analysis] = [:]
@@ -93,6 +95,8 @@ final class Autopilot: ObservableObject {
                 self.physicalInterface = physical ?? (kind == .wifi ? "en0" : (kind == .cellular ? "pdp_ip0" : nil))
                 if changed {
                     self.whitelist = nil
+                    self.netClass = nil
+                    self.pendingClass = nil
                     self.onNetworkChange?(kind)
                 }
             }
@@ -130,7 +134,7 @@ final class Autopilot: ObservableObject {
         // Under detected whitelists on cellular it counts twice as much.
         let fit = Double(fitness(n, kind: kind))
         var weight = 1.6 - fit / 100
-        if kind == .cellular && whitelist == true { weight = weight * weight * 1.2 }
+        if whitelist == true && (kind == .cellular || netClass?.isWhitelist == true) { weight = weight * weight * 1.2 }
         guard let h = health[key(n.id, kind)] else {
             // Untested: the last plain test if any, else judged by the config alone.
             if let l = n.latency { return (l > 0 ? Double(l) : 50_000) * weight }
@@ -146,6 +150,14 @@ final class Autopilot: ObservableObject {
     /// The servers that suit a network best, fastest and most reliable first.
     func pool(from nodes: [ServerNode], kind: NetKind, size: Int, useHints: Bool) -> [ServerNode] {
         var base = nodes
+        // A measured white list beats the names: only servers that can pass it.
+        if let c = netClass, c.isWhitelist {
+            let pass = nodes.filter { ServerHints.russian($0) || (c.kind == "whitelist-sni" && analysis($0)?.ruSni == true) }
+            if !pass.isEmpty {
+                let sorted = pass.sorted { score($0, kind: kind) < score($1, kind: kind) }
+                return Array(sorted.prefix(max(1, size)))
+            }
+        }
         if useHints {
             let preferred: [ServerNode]
             switch kind {
@@ -162,35 +174,33 @@ final class Autopilot: ObservableObject {
         return Array(sorted.prefix(max(1, size)))
     }
 
-    /// With the VPN off: is only the Russian internet reachable?
+    /// What the operator lets through directly. The core probes around the
+    /// tunnel (the caller sets the test interface), so this works with the
+    /// VPN on. A changed class counts once seen twice in a row: one weak
+    /// signal moment must not flip the server choice.
     func probeWhitelist() async {
-        let cfg = URLSessionConfiguration.ephemeral
-        cfg.timeoutIntervalForRequest = 4
-        cfg.timeoutIntervalForResource = 5
-        let session = URLSession(configuration: cfg)
-        func reachable(_ s: String) async -> Bool {
-            guard let url = URL(string: s) else { return false }
-            var req = URLRequest(url: url)
-            req.httpMethod = "HEAD"
-            return (try? await session.data(for: req)) != nil
-        }
-        async let foreign1 = reachable("https://www.google.com/generate_204")
-        async let foreign2 = reachable("https://www.cloudflare.com/cdn-cgi/trace")
-        async let local = reachable("https://ya.ru")
-        let (f1, f2, l) = await (foreign1, foreign2, local)
-        session.invalidateAndCancel()
+        let r = await Task.detached(priority: .utility) { Core.classifyNetwork() }.value
         lastProbe = Date()
-        if !l && !f1 && !f2 { whitelist = nil; return }
-        whitelist = l && !f1 && !f2
+        guard let r else { return }
+        if let cur = netClass, cur.kind != r.kind, pendingClass != r.kind {
+            pendingClass = r.kind
+            return
+        }
+        pendingClass = nil
+        netClass = r
+        switch r.kind {
+        case "whitelist-ip", "whitelist-sni": whitelist = true
+        case "open", "dpi": whitelist = false
+        default: whitelist = nil
+        }
     }
+
+    /// No network at all: failed tests say nothing about the servers.
+    var offline: Bool { netClass?.kind == "offline" }
 
     var summary: String {
         var s = "Сеть: \(network.title)"
-        switch whitelist {
-        case true?: s += " · белые списки"
-        case false?: s += " · интернет открыт"
-        case nil: break
-        }
+        if let c = netClass { s += " · " + c.title }
         return s
     }
 }

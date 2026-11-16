@@ -23,11 +23,26 @@ final class VPNController: ObservableObject {
     var isConnected: Bool { status == .connected }
     var isBusy: Bool { status == .connecting || status == .disconnecting || status == .reasserting }
 
+    /// The saved profile is broken (other tunnel id after re-signing, an
+    /// unreadable payload, disabled by iOS after an update): it is replaced
+    /// on the next connect, once per launch so iOS does not ask in a loop.
+    @Published private(set) var needsRepair = false
+    private var repairTried = false
+
     func load() async {
         do {
             let all = try await NETunnelProviderManager.loadAllFromPreferences()
-            manager = all.first
-            if let m = manager { update(m.connection) }
+            // Ours first: a leftover profile of an older build must not win.
+            manager = all.first { ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == AppInfo.tunnelBundleID } ?? all.first
+            if let m = manager {
+                let proto = m.protocolConfiguration as? NETunnelProviderProtocol
+                let payloadOK = (proto?.providerConfiguration?["payload"] as? Data).flatMap { try? JSONDecoder().decode(TunnelPayload.self, from: $0) } != nil
+                needsRepair = proto?.providerBundleIdentifier != AppInfo.tunnelBundleID || !payloadOK
+                if needsRepair {
+                    lastError = "Профиль VPN устарел или повреждён (например, после обновления iOS или переподписи). Он будет пересоздан при следующем подключении."
+                }
+                update(m.connection)
+            }
         } catch {
             lastError = SigningAdvice.explain(error)
         }
@@ -46,6 +61,11 @@ final class VPNController: ObservableObject {
 
     /// Saves the configuration (creating the VPN profile on first use).
     func save(payload: TunnelPayload, settings: AppSettings) async throws {
+        if needsRepair, !repairTried, let old = manager {
+            repairTried = true
+            try? await old.removeFromPreferences()
+            manager = nil
+        }
         let m = manager ?? NETunnelProviderManager()
         let proto = (m.protocolConfiguration as? NETunnelProviderProtocol) ?? NETunnelProviderProtocol()
         proto.providerBundleIdentifier = AppInfo.tunnelBundleID
@@ -67,6 +87,10 @@ final class VPNController: ObservableObject {
         try await m.saveToPreferences()
         try await m.loadFromPreferences()
         manager = m
+        if needsRepair {
+            needsRepair = false
+            lastError = nil
+        }
     }
 
     private func onDemandRules(_ s: AppSettings) -> [NEOnDemandRule] {

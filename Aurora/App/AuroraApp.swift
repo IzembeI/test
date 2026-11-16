@@ -52,7 +52,7 @@ struct AuroraApp: App {
                 .task {
                     model.startPolling()
                     if model.settings.updateSubsOnLaunch { await model.updateAll(onlyDue: true) }
-                    if !model.vpn.isConnected { await model.autopilot.probeWhitelist() }
+                    await model.classifyNetwork()
                     if model.settings.autoSelect && model.settings.autopilotScanOnOpen {
                         model.autopilotScan()
                     } else if model.settings.autoPingOnOpen {

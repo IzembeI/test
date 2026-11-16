@@ -153,7 +153,7 @@ struct HomeView: View {
                     Label("Лучший: \(top.flag.isEmpty ? "" : top.flag + " ")\(top.displayName)", systemImage: "star").font(.subheadline)
                 }
                 if vpn.isConnected, let c = model.stats.aliveCount {
-                    Text("В наборе \(c.total) из \(model.autopilotScope.count), отвечают \(c.alive). Проверка каждые 45 с, ядро само уходит с упавшего.")
+                    Text("В наборе \(c.total) из \(model.autopilotScope.count), отвечают \(c.alive). Ядро само уходит с упавшего.")
                         .font(.caption).foregroundStyle(c.alive == 0 ? Color.red : .secondary)
                 } else {
                     Text("В наборе \(pool.count) из \(model.autopilotScope.count): ядро само переключается на живой и быстрый.")
@@ -171,11 +171,13 @@ struct HomeView: View {
                     }
                     .disabled(model.autopilotBusy)
                     Spacer()
-                    if !vpn.isConnected {
-                        Button { Task { await autopilot.probeWhitelist() } } label: { Image(systemName: "antenna.radiowaves.left.and.right") }
-                    }
+                    Button { Task { await model.classifyNetwork() } } label: { Image(systemName: "antenna.radiowaves.left.and.right") }
+                        .accessibilityLabel("Проверить сеть")
                 }
                 .font(.subheadline)
+                if let c = autopilot.netClass {
+                    Text(c.detail).font(.caption).foregroundStyle(c.isWhitelist || c.kind == "offline" ? Color.orange : .secondary)
+                }
             } else {
                 Text("Сам изучает конфиги всех подписок, проверяет серверы и держит подключение к лучшему для текущей сети.")
                     .font(.caption).foregroundStyle(.secondary)
