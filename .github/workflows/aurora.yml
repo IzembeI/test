@@ -62,6 +62,10 @@ jobs:
           APP=build/Build/Products/Release-iphoneos/Aurora.app
           codesign -f -s - --entitlements Tunnel/Tunnel.entitlements "$APP/PlugIns/Tunnel.appex"
           codesign -f -s - --entitlements App/App.entitlements "$APP"
+          for b in "$APP/PlugIns/Tunnel.appex" "$APP"; do
+            echo "== $b"; codesign -d --entitlements - "$b" 2>/dev/null | grep -E "packet-tunnel|application-groups" || { echo "missing entitlements"; exit 1; }
+          done
+          du -sh "$APP" "$APP/PlugIns/Tunnel.appex"
           mkdir Payload
           cp -R "$APP" Payload/
           zip -qry Aurora.ipa Payload
