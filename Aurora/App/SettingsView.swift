@@ -32,6 +32,7 @@ struct SettingsView: View {
                     NavigationLink { StatsView() } label: { Label("Статистика", systemImage: "chart.bar") }
                     NavigationLink { LogsView() } label: { Label("Журнал", systemImage: "doc.text.magnifyingglass") }
                     NavigationLink { ConfigPreviewView() } label: { Label("Итоговый конфиг Xray", systemImage: "curlybraces") }
+                    NavigationLink { SigningView() } label: { Label("Подпись и VPN", systemImage: "checkmark.shield") }
                 }
                 Section("Резервная копия") {
                     Button { exportBackup() } label: { Label("Экспорт в файл", systemImage: "square.and.arrow.up") }
@@ -487,6 +488,82 @@ struct ConfigPreviewView: View {
             switch Core.buildConfig(JSON.string(o)) {
             case .success(let c): text = c
             case .failure(let e): text = "Ошибка: \(e.message)"
+            }
+        }
+    }
+}
+
+// MARK: - Signing diagnostics
+
+struct SigningView: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        let app = Provision.current
+        let tunnel = Provision.tunnelProfile
+        Form {
+            Section {
+                row("VPN-расширение в приложении", ok: AppInfo.tunnelPresent)
+                row("Право на VPN у приложения", ok: Provision.allowsPacketTunnel(app))
+                row("Право на VPN у расширения", ok: Provision.allowsPacketTunnel(tunnel))
+                row("App Group", ok: Storage.hasAppGroup, unknownText: nil)
+            } header: {
+                Text("Проверка")
+            } footer: {
+                Text(verdict(app: app, tunnel: tunnel))
+            }
+            Section("Профиль подписи") {
+                if let p = app ?? tunnel {
+                    LabeledContent("Профиль", value: p.name)
+                    LabeledContent("Команда", value: p.team)
+                    if let e = p.expires { LabeledContent("Действует до", value: Fmt.date(e)) }
+                    LabeledContent("Тип", value: p.isEnterprise ? "Enterprise (все устройства)" : "Ad Hoc / Development")
+                } else {
+                    Text("Файл embedded.mobileprovision удалён при подписи — права можно проверить только подключением.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            Section("Идентификаторы") {
+                LabeledContent("Приложение", value: Bundle.main.bundleIdentifier ?? "—")
+                LabeledContent("VPN-расширение", value: AppInfo.tunnelBundleID)
+                LabeledContent("App Group", value: AppInfo.appGroup)
+            }
+            Section {
+                Button("Проверить: создать VPN-профиль") {
+                    guard let payload = model.makePayload(for: model.selected) else { return }
+                    Task {
+                        do {
+                            try await model.vpn.save(payload: payload, settings: model.settings)
+                            model.toast = "VPN-профиль создан — iOS разрешила Network Extension"
+                        } catch {
+                            model.toast = SigningAdvice.explain(error)
+                        }
+                    }
+                }
+            } footer: {
+                Text("Для подписи в ESign/Feather и подобных: сертификат должен поддерживать Network Extensions; не включайте «Удаление URL схемы», иначе перестанут открываться ссылки happ:// и vless://.")
+            }
+        }
+        .navigationTitle("Подпись и VPN")
+    }
+
+    private func verdict(app: Provision?, tunnel: Provision?) -> String {
+        switch (Provision.allowsPacketTunnel(app), Provision.allowsPacketTunnel(tunnel)) {
+        case (true?, true?), (nil, true?): return "Профиль разрешает Packet Tunnel — VPN должен включаться."
+        case (false?, _), (_, false?): return "Профиль подписи НЕ разрешает Network Extension. Приложение работает, но iOS не даст включить VPN. Нужен другой сертификат (с поддержкой Network Extensions) или TrollStore."
+        default: return "Профиль не найден в приложении. Нажмите «Проверить» ниже — iOS сама скажет, разрешён ли VPN."
+        }
+    }
+
+    @ViewBuilder
+    private func row(_ title: String, ok: Bool?, unknownText: String? = "неизвестно") -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            switch ok {
+            case true?: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            case false?: Image(systemName: "xmark.circle.fill").foregroundStyle(unknownText == nil ? .orange : .red)
+            case nil: Text(unknownText ?? "—").foregroundStyle(.secondary)
             }
         }
     }

@@ -157,7 +157,7 @@ final class AppModel: ObservableObject {
                 try vpn.start()
                 haptic()
             } catch {
-                toast = "Не удалось включить VPN: \(error.localizedDescription)"
+                toast = "Не удалось включить VPN: \(SigningAdvice.explain(error))"
             }
         }
     }

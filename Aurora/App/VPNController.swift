@@ -29,7 +29,7 @@ final class VPNController: ObservableObject {
             manager = all.first
             if let m = manager { update(m.connection) }
         } catch {
-            lastError = error.localizedDescription
+            lastError = SigningAdvice.explain(error)
         }
     }
 
@@ -39,7 +39,7 @@ final class VPNController: ObservableObject {
         if conn.status == .disconnected, #available(iOS 16.0, *) {
             conn.fetchLastDisconnectError { [weak self] err in
                 guard let err else { return }
-                Task { @MainActor in self?.lastError = err.localizedDescription }
+                Task { @MainActor in self?.lastError = SigningAdvice.explain(err) }
             }
         }
     }

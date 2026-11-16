@@ -1,10 +1,100 @@
 import Foundation
 
 enum AppInfo {
-    static let appGroup = "group.com.werx.aurora"
-    static let tunnelBundleID = "com.werx.aurora.tunnel"
+    static let defaultAppGroup = "group.com.werx.aurora"
+
+    /// The App Group really granted by the signing profile. Re-signing tools
+    /// often rename it, so it is read from embedded.mobileprovision first.
+    static let appGroup: String = {
+        if let groups = Provision.current?.entitlements["com.apple.security.application-groups"] as? [String] {
+            if let ours = groups.first(where: { $0.lowercased().contains("aurora") }) { return ours }
+            if let first = groups.first { return first }
+        }
+        return defaultAppGroup
+    }()
+
+    /// Bundle id of the packet tunnel as it is in this install: re-signing can
+    /// change bundle ids, so it is read from the extension itself.
+    static var tunnelBundleID: String {
+        if let plugins = Bundle.main.builtInPlugInsURL,
+           let items = try? FileManager.default.contentsOfDirectory(at: plugins, includingPropertiesForKeys: nil) {
+            for url in items where url.pathExtension == "appex" {
+                guard let b = Bundle(url: url),
+                      let ext = b.infoDictionary?["NSExtension"] as? [String: Any],
+                      let point = ext["NSExtensionPointIdentifier"] as? String,
+                      point.contains("packet-tunnel"), let id = b.bundleIdentifier else { continue }
+                return id
+            }
+        }
+        return (Bundle.main.bundleIdentifier ?? "com.werx.aurora") + ".tunnel"
+    }
+
+    static var tunnelPresent: Bool {
+        guard let plugins = Bundle.main.builtInPlugInsURL else { return false }
+        return FileManager.default.fileExists(atPath: plugins.appendingPathComponent("Tunnel.appex").path)
+            || ((try? FileManager.default.contentsOfDirectory(atPath: plugins.path))?.contains { $0.hasSuffix(".appex") } ?? false)
+    }
+
     static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
     static let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+}
+
+/// What the signing profile allows (read from embedded.mobileprovision when
+/// the signer kept it).
+struct Provision {
+    var name: String
+    var team: String
+    var expires: Date?
+    var entitlements: [String: Any]
+    var isEnterprise: Bool
+
+    static let current: Provision? = load(Bundle.main)
+
+    static func load(_ bundle: Bundle) -> Provision? {
+        guard let url = bundle.url(forResource: "embedded", withExtension: "mobileprovision"),
+              let data = try? Data(contentsOf: url) else { return nil }
+        let text = String(decoding: data, as: UTF8.self)
+        guard let start = text.range(of: "<?xml"), let end = text.range(of: "</plist>") else { return nil }
+        let xml = String(text[start.lowerBound..<end.upperBound])
+        guard let d = xml.data(using: .utf8),
+              let plist = (try? PropertyListSerialization.propertyList(from: d, format: nil)) as? [String: Any] else { return nil }
+        return Provision(name: plist["Name"] as? String ?? "—",
+                         team: plist["TeamName"] as? String ?? "—",
+                         expires: plist["ExpirationDate"] as? Date,
+                         entitlements: plist["Entitlements"] as? [String: Any] ?? [:],
+                         isEnterprise: plist["ProvisionsAllDevices"] as? Bool ?? false)
+    }
+
+    /// nil when unknown (no profile in the bundle).
+    static func allowsPacketTunnel(_ p: Provision?) -> Bool? {
+        guard let p else { return nil }
+        let ne = p.entitlements["com.apple.developer.networking.networkextension"]
+        if let list = ne as? [String] { return list.contains { $0.hasPrefix("packet-tunnel-provider") } }
+        if let s = ne as? String { return s.hasPrefix("packet-tunnel-provider") }
+        return false
+    }
+
+    static var tunnelProfile: Provision? {
+        guard let plugins = Bundle.main.builtInPlugInsURL,
+              let items = try? FileManager.default.contentsOfDirectory(at: plugins, includingPropertiesForKeys: nil),
+              let appex = items.first(where: { $0.pathExtension == "appex" }),
+              let b = Bundle(url: appex) else { return nil }
+        return load(b)
+    }
+}
+
+/// Turns NetworkExtension failures into advice about the signature.
+enum SigningAdvice {
+    static func explain(_ error: Error) -> String {
+        let ns = error as NSError
+        let text = ns.localizedDescription
+        let lower = text.lowercased()
+        if ns.domain == "NEVPNErrorDomain" && (ns.code == 5 || ns.code == 1)
+            || lower.contains("permission denied") || lower.contains("ipc failed") || lower.contains("entitlement") {
+            return "iOS не дал создать VPN: сертификат или профиль подписи не разрешает Network Extension (Packet Tunnel). Нужен сертификат с этой возможностью — проверьте раздел «Подпись и VPN» в настройках. (\(text))"
+        }
+        return text
+    }
 }
 
 // MARK: - Servers
