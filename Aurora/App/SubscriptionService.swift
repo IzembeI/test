@@ -35,7 +35,7 @@ enum SubscriptionService {
         }
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw CoreError("Нет ответа") }
-        guard (200..<300).contains(http.statusCode) else { throw CoreError("Сервер ответил \(http.statusCode)") }
+        guard (200..<300).contains(http.statusCode) else { throw CoreError(explainFailure(http, data: data, sentHWID: sendHWID)) }
         let body = String(data: data, encoding: .utf8) ?? ""
         var result = parse(body: body)
         apply(headers: http.allHeaderFields, to: &result)
@@ -45,6 +45,28 @@ enum SubscriptionService {
         }
         if result.nodes.isEmpty { throw CoreError(result.errors.first ?? "В подписке нет серверов") }
         return result
+    }
+
+    /// Panels with a device limit (Remnawave and others) answer a device
+    /// over the limit with a bare 403/404: say what it means in words.
+    static func explainFailure(_ http: HTTPURLResponse, data: Data, sentHWID: Bool) -> String {
+        let headers = http.allHeaderFields.map { "\($0.key)".lowercased() + ":" + "\($0.value)".lowercased() }.joined(separator: "\n")
+        let body = (String(data: data.prefix(2048), encoding: .utf8) ?? "").lowercased()
+        let text = headers + "\n" + body
+        let hwidWords = ["hwid", "device limit", "devices limit", "max-devices", "max devices", "лимит устройств", "устройств"]
+        if hwidWords.contains(where: text.contains) {
+            if !sentHWID {
+                return "Панель провайдера требует HWID устройства. Включите «Отправлять HWID устройства» в настройках подписок и обновите подписку."
+            }
+            return "Достигнут лимит устройств у провайдера: эта подписка уже используется на максимуме устройств. Удалите старое устройство в личном кабинете или боте провайдера, или попросите провайдера сбросить устройства."
+        }
+        switch http.statusCode {
+        case 401, 403: return "Провайдер отказал в доступе (\(http.statusCode)): подписка отключена, истекла или на ней лимит устройств."
+        case 404: return "Подписка не найдена (404): ссылка устарела, подписка удалена или на ней лимит устройств."
+        case 429: return "Провайдер ограничил частоту запросов (429). Попробуйте обновить позже."
+        case 500...599: return "Сервер подписки временно не работает (\(http.statusCode)). Попробуйте позже."
+        default: return "Сервер подписки ответил \(http.statusCode)"
+        }
     }
 
     static func deviceModel() -> String {

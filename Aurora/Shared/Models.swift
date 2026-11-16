@@ -354,6 +354,8 @@ struct AppSettings: Codable, Hashable {
     var fragmentInterval = "10-20"
     var localSocksPort = 0
     var localHTTPPort = 0
+    /// Password of the local SOCKS/HTTP ports (user "aurora"), made on first use.
+    var localProxyPassword = ""
     var lanShare = false
     var chainServerID: UUID?
     // Ping

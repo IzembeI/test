@@ -24,6 +24,8 @@ type buildOptions struct {
 	SocksPort int              `json:"socksPort"` // 0 = no local SOCKS/HTTP inbound
 	HTTPPort  int              `json:"httpPort"`
 	LANShare  bool             `json:"lanShare"` // listen on 0.0.0.0
+	LocalUser string           `json:"localUser"`
+	LocalPass string           `json:"localPass"` // set: the local ports ask for it
 	Sniffing  bool             `json:"sniffing"`
 	RouteOnly bool             `json:"routeOnly"`
 	IPv6      bool             `json:"ipv6"`
@@ -186,12 +188,27 @@ func localInbounds(o buildOptions) []any {
 	}
 	var res []any
 	sniff := map[string]any{"enabled": o.Sniffing, "destOverride": []string{"http", "tls", "quic"}, "routeOnly": o.RouteOnly}
+	// Any app on the phone can reach a local port: without a password it
+	// could use the proxy and learn the exit address, and some apps look
+	// for exactly that to detect a VPN. The app always sends a password.
+	socks := map[string]any{"udp": true, "auth": "noauth"}
+	httpSettings := map[string]any{}
+	if o.LocalPass != "" {
+		user := o.LocalUser
+		if user == "" {
+			user = "aurora"
+		}
+		acc := []any{map[string]any{"user": user, "pass": o.LocalPass}}
+		socks = map[string]any{"udp": true, "auth": "password", "accounts": acc}
+		httpSettings = map[string]any{"accounts": acc}
+	}
 	if o.SocksPort > 0 {
 		res = append(res, map[string]any{"tag": "socks", "listen": listen, "port": o.SocksPort, "protocol": "socks",
-			"settings": map[string]any{"udp": true, "auth": "noauth"}, "sniffing": sniff})
+			"settings": socks, "sniffing": sniff})
 	}
 	if o.HTTPPort > 0 {
-		res = append(res, map[string]any{"tag": "http", "listen": listen, "port": o.HTTPPort, "protocol": "http", "sniffing": sniff})
+		res = append(res, map[string]any{"tag": "http", "listen": listen, "port": o.HTTPPort, "protocol": "http",
+			"settings": httpSettings, "sniffing": sniff})
 	}
 	return res
 }
@@ -622,20 +639,16 @@ func buildFromRaw(o buildOptions) (map[string]any, error) {
 	if err := json.Unmarshal([]byte(o.RawConfig), &cfg); err != nil {
 		return nil, errString("custom config: " + err.Error())
 	}
-	inbounds, _ := cfg["inbounds"].([]any)
+	// The config's own inbounds (SOCKS, HTTP, API, dokodemo-door) are all
+	// dropped: open local ports let other apps use the proxy and detect the
+	// VPN. Only the TUN and the app's own password-protected ports stay.
 	kept := []any{}
-	for _, in := range inbounds {
-		if m, ok := in.(map[string]any); ok {
-			if p, _ := m["protocol"].(string); p == "tun" {
-				continue
-			}
-			kept = append(kept, m)
-		}
-	}
 	if o.TUN {
-		kept = append([]any{tunInbound(o)}, kept...)
+		kept = append(kept, tunInbound(o))
 	}
+	kept = append(kept, localInbounds(o)...)
 	cfg["inbounds"] = kept
+	delete(cfg, "api")
 	outbounds, _ := cfg["outbounds"].([]any)
 	hasDNS := false
 	for _, ob := range outbounds {

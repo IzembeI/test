@@ -213,3 +213,24 @@ func TestRawConfigGetsPushSettings(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestNoOpenLocalPorts(t *testing.T) {
+	raw := `{"inbounds":[{"tag":"s","listen":"0.0.0.0","port":10808,"protocol":"socks","settings":{"auth":"noauth"}},{"tag":"api","listen":"127.0.0.1","port":10085,"protocol":"dokodemo-door","settings":{"address":"127.0.0.1"}}],"api":{"tag":"api","services":["StatsService"]},"outbounds":[{"tag":"proxy","protocol":"trojan","settings":{"address":"1.2.3.4","port":443,"password":"p"},"streamSettings":{"security":"tls"}}]}`
+	b, _ := json.Marshal(buildOptions{RawConfig: raw, TUN: true})
+	out := BuildConfig(string(b))
+	if strings.Contains(out, "10808") || strings.Contains(out, "dokodemo") || strings.Contains(out, `"api"`) {
+		t.Fatal("the config's own listeners must go:", out)
+	}
+	if e := Validate(out); e != "" {
+		t.Fatal(e)
+	}
+	// The app's own ports ask for a password.
+	b, _ = json.Marshal(buildOptions{RawConfig: raw, TUN: true, SocksPort: 10808, HTTPPort: 10809, LocalPass: "secret"})
+	out = BuildConfig(string(b))
+	if strings.Count(out, `"pass": "secret"`) != 2 || !strings.Contains(out, `"auth": "password"`) || !strings.Contains(out, `"listen": "127.0.0.1"`) {
+		t.Fatal(out)
+	}
+	if e := Validate(out); e != "" {
+		t.Fatal(e)
+	}
+}

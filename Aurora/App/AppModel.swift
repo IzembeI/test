@@ -127,12 +127,18 @@ final class AppModel: ObservableObject {
 
     func buildOptions(for node: ServerNode?, kind: NetKind? = nil) -> [String: Any] {
         let r = routing
+        if (settings.localSocksPort > 0 || settings.localHTTPPort > 0) && settings.localProxyPassword.isEmpty {
+            // Open ports always ask for a password: other apps on the phone
+            // could otherwise use the proxy or detect the VPN through it.
+            settings.localProxyPassword = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(16)).lowercased()
+        }
         let s = settings
         var o: [String: Any] = [
             "mode": s.mode.rawValue, "tun": true, "mtu": s.mtu, "sniffing": s.sniffing, "routeOnly": s.routeOnly,
             "ipv6": s.ipv6, "logLevel": s.logLevel, "stats": true, "socksPort": s.localSocksPort, "httpPort": s.localHTTPPort,
             // Balancer probes cost traffic: every minute on Wi‑Fi, every 3 min on cellular.
             "lanShare": s.lanShare, "probeURL": s.pingURL, "probeMinutes": 3,
+            "localUser": "aurora", "localPass": s.localProxyPassword,
             "probeSeconds": (kind ?? autopilot.network) == .wifi ? 60 : 180,
             "apnsViaProxy": s.apnsViaProxy, "connIdle": s.connIdle, "useConfigDNS": s.useConfigDNS, "bufferKB": s.bufferKB,
             "dns": ["remote": r.remoteDNS, "direct": r.directDNS, "fakeDNS": r.fakeDNS, "hosts": r.hosts,
@@ -386,9 +392,10 @@ final class AppModel: ObservableObject {
             let again = quick.filter { best.contains($0.0) }
             let r2 = Core.urlTestDetailed(items: again.map(\.1), url: url, timeoutMs: timeout, concurrency: 8)
             var final = pass1
+            // The calmer second measurement wins: the minimum of two made
+            // servers look faster than they are.
             for (i, it) in again.enumerated() where i < r2.count {
-                let a = pass1[it.0]?.0 ?? -1, b = r2[i].0
-                final[it.0] = b > 0 ? ((a > 0 ? min(a, b) : b), nil) : r2[i]
+                final[it.0] = r2[i].0 > 0 ? (r2[i].0, nil) : r2[i]
             }
             let snapshot = final
             await MainActor.run {
@@ -624,12 +631,23 @@ final class AppModel: ObservableObject {
             s.lastError = nil
             // Merge: keep ids (and the selection) of servers that are still there.
             let old = servers.filter { $0.groupID == id }
+            // JSON configs have no link, and providers reuse names («Автовыбор»):
+            // the n-th server of a name keeps the n-th old one's id, so two
+            // servers never share an id (and their health history).
+            func keys(_ list: [ServerNode]) -> [String] {
+                var seen: [String: Int] = [:]
+                return list.map { n in
+                    let base = n.link.isEmpty ? "name:" + n.name : n.link
+                    seen[base, default: 0] += 1
+                    return base + "#\(seen[base]!)"
+                }
+            }
             var byLink: [String: ServerNode] = [:]
-            for o in old { byLink[o.link.isEmpty ? o.name : o.link] = o }
+            for (k, o) in zip(keys(old), old) { byLink[k] = o }
             var merged: [ServerNode] = []
-            for var n in r.nodes {
+            for (k, var n) in zip(keys(r.nodes), r.nodes) {
                 n.groupID = id
-                if let prev = byLink[n.link.isEmpty ? n.name : n.link] {
+                if let prev = byLink.removeValue(forKey: k) {
                     n.id = prev.id
                     n.latency = prev.latency
                     n.testedAt = prev.testedAt

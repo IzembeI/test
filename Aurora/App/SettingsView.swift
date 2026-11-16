@@ -328,8 +328,14 @@ struct ConnectionSettingsView: View {
                 Stepper("SOCKS5: \(model.settings.localSocksPort == 0 ? "выкл" : String(model.settings.localSocksPort))", value: $model.settings.localSocksPort, in: 0...65535, step: model.settings.localSocksPort == 0 ? 10808 : 1)
                 Stepper("HTTP: \(model.settings.localHTTPPort == 0 ? "выкл" : String(model.settings.localHTTPPort))", value: $model.settings.localHTTPPort, in: 0...65535, step: model.settings.localHTTPPort == 0 ? 10809 : 1)
                 Toggle("Доступ из локальной сети", isOn: $model.settings.lanShare)
+                if model.settings.localSocksPort == 0 && model.settings.localHTTPPort == 0 {
+                    Label("Локальные порты закрыты", systemImage: "lock.shield.fill").foregroundStyle(.green)
+                } else if !model.settings.localProxyPassword.isEmpty {
+                    LabeledContent("Логин", value: "aurora")
+                    LabeledContent("Пароль", value: model.settings.localProxyPassword).textSelection(.enabled)
+                }
             } header: { Text("Локальный прокси") } footer: {
-                Text("Позволяет раздать прокси другим устройствам в вашей Wi‑Fi сети (укажите IP iPhone и порт).")
+                Text("Позволяет раздать прокси другим устройствам в вашей Wi‑Fi сети (укажите IP iPhone и порт). Порты всегда с паролем: без него любое приложение на телефоне могло бы пользоваться прокси и обнаружить VPN. Входы SOCKS/HTTP/API из импортированных JSON-конфигов Aurora закрывает.")
             }
         }
         .navigationTitle("Подключение")
@@ -356,7 +362,7 @@ struct ProxySettingsView: View {
                     TextField("Интервал, мс", text: $model.settings.fragmentInterval)
                 }
             } header: { Text("Фрагментация") } footer: {
-                Text("Делит TLS ClientHello на части — помогает против DPI, если сервер блокируют по SNI.")
+                Text("Делит TLS ClientHello на части — помогает против DPI, если сервер блокируют по SNI. К серверам из полных JSON-конфигов не применяется: у них своя настройка внутри конфига. При белых списках по SNI может мешать: DPI не увидит разрешённый домен.")
             }
             Section {
                 Toggle("Mux (мультиплексирование)", isOn: $model.settings.muxEnabled)
