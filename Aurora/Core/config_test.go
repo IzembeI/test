@@ -32,6 +32,8 @@ func TestBuildVariants(t *testing.T) {
 		{Outbounds: obs, Mode: "rule", TUN: true, Stats: true, Routing: routingOptions{BypassRU: true, BlockQUIC: true}},
 		{Outbounds: obs[2:], Chain: obs[1:2], Mode: "global", TUN: true},
 		{Mode: "direct", TUN: true},
+		{Outbounds: obs[:1], Mode: "rule", TUN: true, APNsViaProxy: true, ConnIdle: 1800, Routing: routingOptions{BypassRU: true, DirectDomains: []string{"domain:apple.com"}}},
+		{RawConfig: `{"dns":{"servers":["8.8.8.8"]},"outbounds":[{"tag":"proxy","protocol":"freedom"}]}`, TUN: true, UseConfigDNS: true},
 		{Outbounds: obs[:1], Mode: "rule", TUN: true, Routing: routingOptions{DirectDomains: []string{"geosite:ru", "domain:ya.ru"}, DirectIPs: []string{"geoip:ru", "1.1.1.0/24"}}},
 		{RawConfig: `{"outbounds":[{"tag":"proxy","protocol":"freedom"}]}`, TUN: true, Stats: true},
 	}

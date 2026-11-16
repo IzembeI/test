@@ -130,6 +130,18 @@ struct NotificationSettingsView: View {
                     Text("«Тихо» — без баннера, только в Центре уведомлений. «Важно» — срочные (разрыв, конец подписки) проходят сквозь режим фокусировки, если iOS это разрешит.")
                 }
 
+                Section {
+                    Toggle("Push-уведомления через VPN", isOn: Binding(get: { !model.settings.excludeAPNs }, set: { model.settings.excludeAPNs = !$0 }))
+                    Toggle("Сервис push Apple всегда через прокси", isOn: $model.settings.apnsViaProxy)
+                    Button { model.applyWhitelistPreset() } label: {
+                        Label("Режим белых списков", systemImage: "checklist")
+                    }
+                } header: {
+                    Text("Push при мобильных ограничениях")
+                } footer: {
+                    Text("Когда мобильный интернет работает только по «белым спискам», push-уведомления надёжнее всего приходят, если: сервис APNs не исключён из VPN, подключён сервер в РФ, а DNS берётся из JSON-конфига. «Режим белых списков» включает всё это разом и выбирает самый быстрый сервер РФ.")
+                }
+
                 Section("Подключение") {
                     Toggle("VPN подключён", isOn: n.onConnect)
                     Toggle("VPN отключён", isOn: n.onDisconnect)
@@ -218,11 +230,20 @@ struct ConnectionSettingsView: View {
             Section {
                 Toggle("Kill Switch (весь трафик только через VPN)", isOn: $model.settings.killSwitch)
                 Toggle("Исключить локальную сеть", isOn: $model.settings.excludeLocal)
-                Toggle("Исключить push-уведомления Apple", isOn: $model.settings.excludeAPNs)
+                Toggle("Исключить сервис push (APNs)", isOn: $model.settings.excludeAPNs)
                 Toggle("Исключить звонки/SMS оператора", isOn: $model.settings.excludeCellularServices)
                 Toggle("IPv6", isOn: $model.settings.ipv6)
             } header: { Text("Туннель") } footer: {
                 Text("Kill Switch не даёт трафику уйти мимо VPN, даже во время переподключения.")
+            }
+            Section {
+                Button { model.applyWhitelistPreset() } label: { Label("Режим белых списков", systemImage: "checklist") }
+                Toggle("Использовать DNS из JSON", isOn: $model.settings.useConfigDNS)
+                Stepper("Простой соединения: \(model.settings.connIdle / 60) мин", value: $model.settings.connIdle, in: 60...7200, step: 60)
+            } header: {
+                Text("Мобильный интернет с ограничениями")
+            } footer: {
+                Text("«DNS из JSON» — для серверов с полным JSON-конфигом используется его собственный раздел dns. Долгий простой (30 мин и больше) не даёт обрываться push-соединению.")
             }
             Section("Автоподключение (On Demand)") {
                 Toggle("Подключаться автоматически", isOn: $model.settings.onDemand)

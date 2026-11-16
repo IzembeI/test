@@ -33,6 +33,36 @@ enum Storage {
         return try? dec.decode(T.self, from: d)
     }
 
+    /// Loads a value whose type may have gained fields since it was saved:
+    /// the saved JSON is laid over the defaults, so nothing is lost.
+    static func loadMerged<T: Codable>(_ type: T.Type, _ name: String, defaults: T) -> T {
+        let url = dataDir.appendingPathComponent(name + ".json")
+        guard let saved = try? Data(contentsOf: url),
+              let savedObj = try? JSONSerialization.jsonObject(with: saved) as? [String: Any] else { return defaults }
+        let enc = JSONEncoder()
+        enc.dateEncodingStrategy = .secondsSince1970
+        guard let base = try? enc.encode(defaults),
+              let baseObj = try? JSONSerialization.jsonObject(with: base) as? [String: Any] else { return defaults }
+        let merged = merge(baseObj, savedObj)
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .secondsSince1970
+        guard let data = try? JSONSerialization.data(withJSONObject: merged),
+              let v = try? dec.decode(T.self, from: data) else { return defaults }
+        return v
+    }
+
+    private static func merge(_ base: [String: Any], _ over: [String: Any]) -> [String: Any] {
+        var out = base
+        for (k, v) in over {
+            if let b = base[k] as? [String: Any], let o = v as? [String: Any] {
+                out[k] = merge(b, o)
+            } else {
+                out[k] = v
+            }
+        }
+        return out
+    }
+
     static func save<T: Encodable>(_ value: T, _ name: String) {
         let url = dataDir.appendingPathComponent(name + ".json")
         let enc = JSONEncoder()

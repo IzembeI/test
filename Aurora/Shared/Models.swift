@@ -233,7 +233,12 @@ struct AppSettings: Codable, Hashable {
     var ipv6 = false
     var killSwitch = false
     var excludeLocal = true
-    var excludeAPNs = true
+    // Push notifications go through the VPN by default: under mobile
+    // whitelists they only arrive reliably that way.
+    var excludeAPNs = false
+    var apnsViaProxy = true
+    var useConfigDNS = true
+    var connIdle = 300
     var excludeCellularServices = true
     var onDemand = false
     var onDemandWiFi = true

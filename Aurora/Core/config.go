@@ -34,6 +34,14 @@ type buildOptions struct {
 	Fragment  fragmentOptions  `json:"fragment"`
 	Mux       muxOptions       `json:"mux"`
 	Stats     bool             `json:"stats"`
+	// APNsViaProxy sends Apple push traffic through the proxy before any other
+	// rule, so profiles that route Apple directly cannot break notifications.
+	APNsViaProxy bool `json:"apnsViaProxy"`
+	// ConnIdle is how long an idle connection is kept, in seconds. Push
+	// connections stay idle for long, so whitelist setups want it high.
+	ConnIdle int `json:"connIdle"`
+	// UseConfigDNS keeps the "dns" section of a full JSON config.
+	UseConfigDNS bool `json:"useConfigDNS"`
 }
 
 type dNSOptions struct {
@@ -74,6 +82,8 @@ type muxOptions struct {
 var lanCIDRs = []string{"10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/4", "255.255.255.255/32", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8"}
 
 var ruDomains = []string{"domain:ru", "domain:su", "domain:xn--p1ai", "domain:xn--d1acj3b", "domain:yandex.net", "domain:yandex.com", "domain:vk.com", "domain:vk.me", "domain:userapi.com", "domain:mail.ru", "domain:gosuslugi.ru", "domain:sberbank.ru", "domain:tinkoff.ru", "domain:tbank.ru", "domain:ozon.ru", "domain:wildberries.ru", "domain:avito.ru", "domain:kinopoisk.ru", "domain:yastatic.net", "domain:mycdn.me", "domain:ok.ru", "domain:mts.ru", "domain:beeline.ru", "domain:megafon.ru", "domain:max.ru"}
+
+var apnsDomains = []string{"domain:push.apple.com", "domain:push-apple.com.akadns.net", "domain:apple-pushnotifications.apple.com"}
 
 var adDomains = []string{"domain:doubleclick.net", "domain:googlesyndication.com", "domain:googleadservices.com", "domain:adservice.google.com", "domain:app-measurement.com", "domain:an.yandex.ru", "domain:adfox.ru", "domain:yandexadexchange.net", "domain:adriver.ru", "domain:mc.yandex.ru", "domain:appsflyer.com", "domain:adjust.com", "domain:unityads.unity3d.com", "domain:ads.vk.com", "domain:top-fwz1.mail.ru"}
 
@@ -172,6 +182,14 @@ func localInbounds(o buildOptions) []any {
 		res = append(res, map[string]any{"tag": "http", "listen": listen, "port": o.HTTPPort, "protocol": "http", "sniffing": sniff})
 	}
 	return res
+}
+
+func policyLevel(o buildOptions) map[string]any {
+	idle := o.ConnIdle
+	if idle <= 0 {
+		idle = 300
+	}
+	return map[string]any{"0": map[string]any{"handshake": 4, "connIdle": idle, "uplinkOnly": 1, "downlinkOnly": 1, "bufferSize": 4}}
 }
 
 func logSection(o buildOptions) map[string]any {
@@ -329,6 +347,10 @@ func buildConfig(o buildOptions) (map[string]any, error) {
 	if o.TUN {
 		addRule(map[string]any{"inboundTag": []string{"tun"}, "port": "53", "outboundTag": "dns-out"})
 	}
+	if o.APNsViaProxy && o.Mode != "direct" {
+		addRule(map[string]any{"domain": apnsDomains, "outboundTag": "proxy"})
+		addRule(map[string]any{"ip": []string{"17.0.0.0/8"}, "port": "5223,2197", "outboundTag": "proxy"})
+	}
 	if o.Routing.BlockQUIC {
 		addRule(map[string]any{"network": "udp", "port": "443", "outboundTag": "block"})
 	}
@@ -426,9 +448,9 @@ func buildConfig(o buildOptions) (map[string]any, error) {
 	if o.Stats {
 		cfg["stats"] = map[string]any{}
 		cfg["policy"] = map[string]any{"system": map[string]any{"statsOutboundUplink": true, "statsOutboundDownlink": true},
-			"levels": map[string]any{"0": map[string]any{"handshake": 4, "connIdle": 300, "uplinkOnly": 1, "downlinkOnly": 1, "bufferSize": 4}}}
+			"levels": policyLevel(o)}
 	} else {
-		cfg["policy"] = map[string]any{"levels": map[string]any{"0": map[string]any{"handshake": 4, "connIdle": 300, "uplinkOnly": 1, "downlinkOnly": 1, "bufferSize": 4}}}
+		cfg["policy"] = map[string]any{"levels": policyLevel(o)}
 	}
 	if o.DNS.FakeDNS {
 		cfg["fakedns"] = []any{map[string]any{"ipPool": "198.18.0.0/16", "poolSize": 4096}}
@@ -578,7 +600,7 @@ func buildFromRaw(o buildOptions) (map[string]any, error) {
 	}
 	routing["rules"] = rules
 	cfg["routing"] = routing
-	if _, ok := cfg["dns"]; !ok {
+	if _, ok := cfg["dns"]; !ok || !o.UseConfigDNS {
 		cfg["dns"] = dnsSection(o, false)
 	}
 	if o.LogDir != "" {

@@ -31,7 +31,7 @@ final class AppModel: ObservableObject {
         subscriptions = Storage.load([Subscription].self, "subscriptions") ?? []
         routings = Storage.load([RoutingProfile].self, "routings") ?? [.russia, .global]
         if routings.isEmpty { routings = [.russia, .global] }
-        settings = Storage.load(AppSettings.self, "settings") ?? AppSettings()
+        settings = Storage.loadMerged(AppSettings.self, "settings", defaults: AppSettings())
         if let s = Storage.defaults.string(forKey: "selected") { selectedID = UUID(uuidString: s) }
         if settings.routingID == nil { settings.routingID = routings.first?.id }
     }
@@ -88,6 +88,7 @@ final class AppModel: ObservableObject {
             "mode": s.mode.rawValue, "tun": true, "mtu": s.mtu, "sniffing": s.sniffing, "routeOnly": s.routeOnly,
             "ipv6": s.ipv6, "logLevel": s.logLevel, "stats": true, "socksPort": s.localSocksPort, "httpPort": s.localHTTPPort,
             "lanShare": s.lanShare, "probeURL": s.pingURL, "probeMinutes": 3,
+            "apnsViaProxy": s.apnsViaProxy, "connIdle": s.connIdle, "useConfigDNS": s.useConfigDNS,
             "dns": ["remote": r.remoteDNS, "direct": r.directDNS, "fakeDNS": r.fakeDNS, "hosts": r.hosts,
                     "strategy": s.ipv6 ? "UseIP" : "UseIPv4"] as [String: Any],
             "routing": ["domainStrategy": r.domainStrategy, "bypassLAN": r.bypassLAN, "bypassRU": r.bypassRU, "blockAds": r.blockAds,
@@ -259,6 +260,39 @@ final class AppModel: ObservableObject {
             }
         }
         servers = copy
+    }
+
+    static func isRussian(_ n: ServerNode) -> Bool {
+        if n.flag == "🇷🇺" { return true }
+        let name = n.name.lowercased()
+        return ["russia", "россия", "moscow", "москва", "спб", "petersburg", "[ru]", " ru ", "ru-", "-ru"].contains { name.contains($0) }
+            || name.hasPrefix("ru ") || name.hasSuffix(" ru")
+    }
+
+    /// Whitelist preset: push through the VPN and a Russian server.
+    func applyWhitelistPreset() {
+        settings.excludeAPNs = false
+        settings.apnsViaProxy = true
+        settings.useConfigDNS = true
+        settings.connIdle = max(settings.connIdle, 1800)
+        settings.reconnectOnNetworkChange = true
+        let ru = servers.filter(Self.isRussian)
+        if ru.isEmpty {
+            toast = "Режим белых списков включён. Серверов РФ в списке не найдено — выберите сервер в РФ вручную."
+        } else if let best = ru.filter({ ($0.latency ?? -1) > 0 }).min(by: { $0.latency! < $1.latency! }) ?? ru.first {
+            selectedID = best.id
+            toast = "Режим белых списков: выбран \(best.displayName)"
+            if ru.allSatisfy({ $0.latency == nil }) { test(ru) }
+        }
+        if vpn.isConnected, let payload = makePayload(for: selected) {
+            // Protocol-level flags (APNs exclusion) need a reconnect to apply.
+            Task {
+                try? await vpn.save(payload: payload, settings: settings)
+                vpn.stop()
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                try? vpn.start()
+            }
+        }
     }
 
     /// Picks the server with the lowest delay and connects to it.

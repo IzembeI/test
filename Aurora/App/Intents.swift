@@ -59,7 +59,7 @@ struct VPNStatusIntent: AppIntent {
     func perform() async throws -> some IntentResult & ReturnsValue<Bool> & ProvidesDialog {
         let m = try await tunnelManager()
         let on = m.connection.status == .connected
-        return .result(value: on, dialog: on ? "VPN подключён" : "VPN не подключён")
+        return .result(value: on, dialog: IntentDialog(stringLiteral: on ? "VPN подключён" : "VPN не подключён"))
     }
 }
 

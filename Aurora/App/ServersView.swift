@@ -62,6 +62,18 @@ struct ServersView: View {
                         }
                         Button { model.testAll() } label: { Label("Проверить все", systemImage: "speedometer") }
                         Button { model.connectBest(in: nil) } label: { Label("Подключить лучший", systemImage: "bolt") }
+                        Button {
+                            let ru = model.servers.filter(AppModel.isRussian)
+                            if let best = ru.filter({ ($0.latency ?? -1) > 0 }).min(by: { $0.latency! < $1.latency! }) {
+                                model.select(best)
+                                if !model.vpn.isConnected { model.connect() }
+                            } else if ru.isEmpty {
+                                model.toast = "Серверов РФ не найдено"
+                            } else {
+                                model.toast = "Проверяю пинг серверов РФ…"
+                                model.test(ru)
+                            }
+                        } label: { Label("Лучший сервер РФ", systemImage: "flag") }
                         Button(role: .destructive) { model.servers.removeAll { ($0.latency ?? 0) < 0 } } label: { Label("Удалить недоступные", systemImage: "trash.slash") }
                     } label: { Image(systemName: "line.3.horizontal.decrease.circle") }
                 }
