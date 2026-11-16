@@ -64,6 +64,7 @@ struct VPNStatusIntent: AppIntent {
 }
 
 struct AuroraShortcuts: AppShortcutsProvider {
+    @AppShortcutsBuilder
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: ToggleVPNIntent(), phrases: ["Переключить VPN в \(.applicationName)", "Toggle \(.applicationName)"])
         AppShortcut(intent: ConnectVPNIntent(), phrases: ["Включить VPN в \(.applicationName)", "Connect \(.applicationName)"])

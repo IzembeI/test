@@ -10,8 +10,8 @@ import (
 	"strings"
 )
 
-// BuildOptions is what the app sends to BuildConfig.
-type BuildOptions struct {
+// buildOptions is what the app sends to BuildConfig.
+type buildOptions struct {
 	Outbounds []map[string]any `json:"outbounds"` // one = single server, several = auto (least ping) group
 	Chain     []map[string]any `json:"chain"`     // optional front hops, the first dials directly
 	RawConfig string           `json:"rawConfig"` // a full Xray JSON from the user, used as is with a TUN added
@@ -29,14 +29,14 @@ type BuildOptions struct {
 	AssetDir  string           `json:"assetDir"`
 	ProbeURL  string           `json:"probeURL"`
 	ProbeMin  int              `json:"probeMinutes"`
-	DNS       DNSOptions       `json:"dns"`
-	Routing   RoutingOptions   `json:"routing"`
-	Fragment  FragmentOptions  `json:"fragment"`
-	Mux       MuxOptions       `json:"mux"`
+	DNS       dNSOptions       `json:"dns"`
+	Routing   routingOptions   `json:"routing"`
+	Fragment  fragmentOptions  `json:"fragment"`
+	Mux       muxOptions       `json:"mux"`
 	Stats     bool             `json:"stats"`
 }
 
-type DNSOptions struct {
+type dNSOptions struct {
 	Remote   string            `json:"remote"`   // through the proxy
 	Direct   string            `json:"direct"`   // for direct domains
 	Strategy string            `json:"strategy"` // UseIP | UseIPv4 | UseIPv6
@@ -44,7 +44,7 @@ type DNSOptions struct {
 	Hosts    map[string]string `json:"hosts"`
 }
 
-type RoutingOptions struct {
+type routingOptions struct {
 	DomainStrategy string   `json:"domainStrategy"`
 	BypassLAN      bool     `json:"bypassLAN"`
 	BypassRU       bool     `json:"bypassRU"`
@@ -58,14 +58,14 @@ type RoutingOptions struct {
 	BlockIPs       []string `json:"blockIPs"`
 }
 
-type FragmentOptions struct {
+type fragmentOptions struct {
 	Enabled  bool   `json:"enabled"`
 	Packets  string `json:"packets"`
 	Length   string `json:"length"`
 	Interval string `json:"interval"`
 }
 
-type MuxOptions struct {
+type muxOptions struct {
 	Enabled     bool `json:"enabled"`
 	Concurrency int  `json:"concurrency"`
 	XUDP        int  `json:"xudpConcurrency"`
@@ -85,10 +85,10 @@ func hasAsset(dir, name string) bool {
 	return err == nil && st.Size() > 0
 }
 
-// BuildConfig turns BuildOptions JSON into a complete Xray JSON config.
+// BuildConfig turns buildOptions JSON into a complete Xray JSON config.
 // On failure the result starts with "error:".
 func BuildConfig(optionsJSON string) string {
-	var o BuildOptions
+	var o buildOptions
 	if err := json.Unmarshal([]byte(optionsJSON), &o); err != nil {
 		return "error:" + err.Error()
 	}
@@ -142,7 +142,7 @@ func isUDPOnly(ob map[string]any) bool {
 	return false
 }
 
-func tunInbound(o BuildOptions) map[string]any {
+func tunInbound(o buildOptions) map[string]any {
 	mtu := o.MTU
 	if mtu <= 0 {
 		mtu = 1500
@@ -157,7 +157,7 @@ func tunInbound(o BuildOptions) map[string]any {
 	return in
 }
 
-func localInbounds(o BuildOptions) []any {
+func localInbounds(o buildOptions) []any {
 	listen := "127.0.0.1"
 	if o.LANShare {
 		listen = "0.0.0.0"
@@ -174,7 +174,7 @@ func localInbounds(o BuildOptions) []any {
 	return res
 }
 
-func logSection(o BuildOptions) map[string]any {
+func logSection(o buildOptions) map[string]any {
 	lvl := o.LogLevel
 	if lvl == "" {
 		lvl = "warning"
@@ -189,7 +189,7 @@ func logSection(o BuildOptions) map[string]any {
 	return l
 }
 
-func buildConfig(o BuildOptions) (map[string]any, error) {
+func buildConfig(o buildOptions) (map[string]any, error) {
 	if strings.TrimSpace(o.RawConfig) != "" {
 		return buildFromRaw(o)
 	}
@@ -496,7 +496,7 @@ func hasFlow(ob map[string]any) bool {
 	return false
 }
 
-func dnsSection(o BuildOptions, geosite bool) map[string]any {
+func dnsSection(o buildOptions, geosite bool) map[string]any {
 	remote := o.DNS.Remote
 	if remote == "" {
 		remote = "https://1.1.1.1/dns-query"
@@ -538,7 +538,7 @@ func dnsSection(o BuildOptions, geosite bool) map[string]any {
 }
 
 // buildFromRaw keeps a user's full config and adds the TUN and DNS hijack.
-func buildFromRaw(o BuildOptions) (map[string]any, error) {
+func buildFromRaw(o buildOptions) (map[string]any, error) {
 	var cfg map[string]any
 	if err := json.Unmarshal([]byte(o.RawConfig), &cfg); err != nil {
 		return nil, errString("custom config: " + err.Error())
