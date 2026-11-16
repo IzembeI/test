@@ -10,7 +10,8 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
-    runs-on: macos-15
+    # The macos-15 pool sometimes queues for a long time; a re-run tries it.
+    runs-on: ${{ github.run_attempt == 1 && 'macos-14' || 'macos-15' }}
     timeout-minutes: 40
     defaults:
       run:
