@@ -1,0 +1,65 @@
+name: Build Aurora IPA
+on:
+  push:
+    paths:
+      - 'Aurora/**'
+      - '.github/workflows/aurora.yml'
+  workflow_dispatch:
+concurrency:
+  group: aurora-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: Aurora
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: Aurora/Core/go.mod
+          cache-dependency-path: Aurora/Core/go.sum
+      - name: Cache Xray framework
+        id: fwcache
+        uses: actions/cache@v4
+        with:
+          path: Aurora/Frameworks/Corebridge.xcframework
+          key: corebridge-${{ hashFiles('Aurora/Core/*.go', 'Aurora/Core/go.sum', 'Aurora/Core/go.mod') }}
+      - name: Build Xray framework (gomobile)
+        if: steps.fwcache.outputs.cache-hit != 'true'
+        working-directory: Aurora/Core
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          gomobile init
+          mkdir -p ../Frameworks
+          gomobile bind -target ios -iosversion 15.0 -trimpath -ldflags="-s -w -buildid=" \
+            -o ../Frameworks/Corebridge.xcframework .
+          ls -la ../Frameworks/Corebridge.xcframework
+      - name: Generate project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild -project Aurora.xcodeproj -scheme Aurora -configuration Release \
+            -sdk iphoneos -derivedDataPath build \
+            CURRENT_PROJECT_VERSION=$GITHUB_RUN_NUMBER \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build \
+            | tee build.log | grep -E "error:|warning: unre|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" build.log || { grep -E "error" -A3 build.log | head -150; exit 1; }
+      - name: Package IPA
+        run: |
+          APP=build/Build/Products/Release-iphoneos/Aurora.app
+          codesign -f -s - --entitlements Tunnel/Tunnel.entitlements "$APP/PlugIns/Tunnel.appex"
+          codesign -f -s - --entitlements App/App.entitlements "$APP"
+          mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qry Aurora.ipa Payload
+          ls -lh Aurora.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Aurora-ipa
+          path: Aurora/Aurora.ipa

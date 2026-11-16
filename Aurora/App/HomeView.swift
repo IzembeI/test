@@ -1,0 +1,187 @@
+import SwiftUI
+import NetworkExtension
+
+struct HomeView: View {
+    @EnvironmentObject var model: AppModel
+    @EnvironmentObject var vpn: VPNController
+    @Binding var tab: Int
+    @State private var now = Date()
+    private let clock = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    connectButton
+                        .padding(.top, 8)
+                    statusLine
+                    Picker("Режим", selection: Binding(get: { model.settings.mode }, set: { model.settings.mode = $0; model.applyIfConnected() })) {
+                        ForEach(RouteMode.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    serverCard
+                    if vpn.isConnected && model.settings.showSpeedOnHome { speedCard }
+                    if let sub = model.subscription(for: model.selected) { SubscriptionCard(sub: sub) }
+                    if let err = vpn.lastError, vpn.status == .disconnected {
+                        Card {
+                            Label(err, systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                                .font(.subheadline)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 24)
+            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("Aurora")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Menu {
+                        Button { model.handle(text: UIPasteboard.general.string ?? "") } label: { Label("Из буфера обмена", systemImage: "doc.on.clipboard") }
+                        Button { model.connectBest(in: model.selected?.groupID) } label: { Label("Лучший сервер", systemImage: "bolt") }
+                        Button { model.testAll() } label: { Label("Проверить все", systemImage: "speedometer") }
+                    } label: { Image(systemName: "plus.circle") }
+                }
+            }
+            .onReceive(clock) { now = $0 }
+        }
+    }
+
+    private var connectButton: some View {
+        let on = vpn.isConnected
+        let busy = vpn.isBusy
+        return Button { model.toggle() } label: {
+            ZStack {
+                Circle()
+                    .fill(on ? AnyShapeStyle(LinearGradient(colors: [Color.accentColor, Color.accentColor.opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing)) : AnyShapeStyle(Color(.secondarySystemGroupedBackground)))
+                    .shadow(color: on ? Color.accentColor.opacity(0.5) : .black.opacity(0.08), radius: on ? 30 : 12, y: 8)
+                Circle()
+                    .strokeBorder(Color.accentColor.opacity(on ? 0 : 0.35), lineWidth: 3)
+                if busy {
+                    ProgressView().controlSize(.large).tint(on ? .white : .accentColor)
+                } else {
+                    Image(systemName: "power")
+                        .font(.system(size: 56, weight: .semibold))
+                        .foregroundStyle(on ? .white : Color.accentColor)
+                }
+            }
+            .frame(width: 180, height: 180)
+            .animation(.spring(response: 0.4, dampingFraction: 0.7), value: on)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(on ? "Отключить VPN" : "Подключить VPN")
+    }
+
+    private var statusLine: some View {
+        VStack(spacing: 4) {
+            Text(vpn.status.title).font(.title3.weight(.semibold))
+            if vpn.isConnected, let since = vpn.connectedSince {
+                Text(Fmt.duration(Int64(now.timeIntervalSince(since))))
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var serverCard: some View {
+        Button { tab = 1 } label: {
+            Card {
+                HStack(spacing: 12) {
+                    Text(model.settings.autoSelect ? "⚡️" : (model.selected?.flag.isEmpty == false ? model.selected!.flag : "🌐"))
+                        .font(.system(size: 34))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(model.settings.autoSelect ? "Авто · лучший сервер" : (model.selected?.displayName ?? "Сервер не выбран"))
+                            .font(.headline)
+                            .lineLimit(1)
+                        HStack(spacing: 6) {
+                            if let s = model.selected {
+                                ProtoBadge(text: s.protoLabel)
+                                if !s.transportLabel.isEmpty { Text(s.transportLabel).font(.caption).foregroundStyle(.secondary) }
+                            } else {
+                                Text("Добавьте подписку или ссылку").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    Spacer()
+                    if let s = model.selected {
+                        VStack(alignment: .trailing) {
+                            if model.testing.contains(s.id) { ProgressView() } else {
+                                Text(Theme.latencyText(s.latency)).font(.subheadline.monospacedDigit()).foregroundStyle(Theme.latencyColor(s.latency))
+                            }
+                        }
+                    }
+                    Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            if let s = model.selected {
+                Button { model.test([s]) } label: { Label("Проверить пинг", systemImage: "speedometer") }
+                Button { UIPasteboard.general.string = model.shareLink(s) } label: { Label("Скопировать ссылку", systemImage: "doc.on.doc") }
+            }
+        }
+    }
+
+    private var speedCard: some View {
+        Card {
+            HStack {
+                VStack(alignment: .leading) {
+                    Label(Fmt.speed(model.downSpeed), systemImage: "arrow.down").font(.headline.monospacedDigit())
+                    Text("↓ \(Fmt.bytes(model.stats.down))").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                VStack(alignment: .trailing) {
+                    Label(Fmt.speed(model.upSpeed), systemImage: "arrow.up").font(.headline.monospacedDigit())
+                    Text("↑ \(Fmt.bytes(model.stats.up))").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Sparkline(values: model.speedHistory).frame(height: 56)
+            HStack {
+                Text("Напрямую: \(Fmt.bytes(model.stats.directUp + model.stats.directDown))")
+                Spacer()
+                Text("Память ядра: \(Fmt.bytes(Int64(model.stats.memory)))")
+            }
+            .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+}
+
+struct SubscriptionCard: View {
+    @EnvironmentObject var model: AppModel
+    var sub: Subscription
+
+    var body: some View {
+        Card {
+            HStack {
+                Text(sub.name).font(.headline).lineLimit(1)
+                Spacer()
+                if model.updatingSubs.contains(sub.id) { ProgressView() } else {
+                    Button { Task { await model.update(sub.id) } } label: { Image(systemName: "arrow.clockwise") }
+                }
+            }
+            if sub.total > 0 {
+                ProgressView(value: sub.usedFraction)
+                    .tint(sub.usedFraction > 0.9 ? .red : .accentColor)
+                Text("\(Fmt.bytes(sub.used)) из \(Fmt.bytes(sub.total))").font(.caption).foregroundStyle(.secondary)
+            } else if sub.used > 0 {
+                Text("Использовано \(Fmt.bytes(sub.used)) · безлимит").font(.caption).foregroundStyle(.secondary)
+            }
+            if let exp = sub.expire {
+                let days = sub.daysLeft ?? 0
+                Label(days < 0 ? "Истекла \(Fmt.date(exp))" : "До \(Fmt.date(exp)) · \(days) \(Notifier.plural(days, "день", "дня", "дней"))",
+                      systemImage: "calendar")
+                    .font(.caption)
+                    .foregroundStyle(days <= model.settings.notifications.expiryDays ? .orange : .secondary)
+            }
+            if let a = sub.announce, !a.isEmpty {
+                Label(a, systemImage: "megaphone").font(.caption).foregroundStyle(.secondary).lineLimit(3)
+            }
+            HStack {
+                if let s = sub.supportURL, let u = URL(string: s) { Link(destination: u) { Label("Поддержка", systemImage: "questionmark.bubble") }.font(.caption) }
+                if let s = sub.webPageURL, let u = URL(string: s) { Link(destination: u) { Label("Кабинет", systemImage: "person.crop.circle") }.font(.caption) }
+            }
+        }
+    }
+}

@@ -1,0 +1,462 @@
+import Foundation
+import SwiftUI
+import NetworkExtension
+import UserNotifications
+
+@MainActor
+final class AppModel: ObservableObject {
+    @Published var servers: [ServerNode] = [] { didSet { Storage.save(servers, "servers") } }
+    @Published var subscriptions: [Subscription] = [] { didSet { Storage.save(subscriptions, "subscriptions") } }
+    @Published var routings: [RoutingProfile] = [] { didSet { Storage.save(routings, "routings") } }
+    @Published var settings = AppSettings() { didSet { Storage.save(settings, "settings") } }
+    @Published var selectedID: UUID? { didSet { Storage.defaults.set(selectedID?.uuidString, forKey: "selected") } }
+
+    @Published var stats = TunnelStats()
+    @Published var upSpeed: Double = 0
+    @Published var downSpeed: Double = 0
+    @Published var speedHistory: [Double] = Array(repeating: 0, count: 60)
+    @Published var testing: Set<UUID> = []
+    @Published var updatingSubs: Set<UUID> = []
+    @Published var toast: String?
+    @Published var pendingImport: ImportItem?
+    @Published var announcement: (title: String, text: String)?
+
+    let vpn = VPNController()
+    private var pollTask: Task<Void, Never>?
+    private var lastStats: TunnelStats?
+    private var lastStatsAt = Date()
+
+    init() {
+        servers = Storage.load([ServerNode].self, "servers") ?? []
+        subscriptions = Storage.load([Subscription].self, "subscriptions") ?? []
+        routings = Storage.load([RoutingProfile].self, "routings") ?? [.russia, .global]
+        if routings.isEmpty { routings = [.russia, .global] }
+        settings = Storage.load(AppSettings.self, "settings") ?? AppSettings()
+        if let s = Storage.defaults.string(forKey: "selected") { selectedID = UUID(uuidString: s) }
+        if settings.routingID == nil { settings.routingID = routings.first?.id }
+    }
+
+    // MARK: Derived
+
+    var selected: ServerNode? { servers.first { $0.id == selectedID } ?? servers.first }
+    var routing: RoutingProfile { routings.first { $0.id == settings.routingID } ?? routings.first ?? .russia }
+
+    func servers(in groupID: UUID?) -> [ServerNode] {
+        let list = servers.filter { $0.groupID == groupID }
+        switch settings.sort {
+        case .manual: return list
+        case .name: return list.sorted { $0.displayName.localizedCompare($1.displayName) == .orderedAscending }
+        case .latency:
+            return list.sorted { a, b in
+                let la = (a.latency ?? -1) < 0 ? Int.max : a.latency!
+                let lb = (b.latency ?? -1) < 0 ? Int.max : b.latency!
+                return la < lb
+            }
+        }
+    }
+
+    func subscription(for node: ServerNode?) -> Subscription? {
+        guard let g = node?.groupID else { return nil }
+        return subscriptions.first { $0.id == g }
+    }
+
+    var totalUp: Double { Storage.defaults.double(forKey: "total.up") }
+    var totalDown: Double { Storage.defaults.double(forKey: "total.down") }
+
+    func dailyTraffic(days: Int = 7) -> [(String, Double)] {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        let label = DateFormatter()
+        label.locale = Locale(identifier: "ru_RU")
+        label.dateFormat = "EE"
+        return (0..<days).reversed().map { i in
+            let d = Calendar.current.date(byAdding: .day, value: -i, to: Date())!
+            return (label.string(from: d), Storage.defaults.double(forKey: "day." + f.string(from: d)))
+        }
+    }
+
+    // MARK: Connection
+
+    func toggle() {
+        if vpn.isConnected || vpn.status == .connecting || vpn.status == .reasserting { vpn.stop() } else { connect() }
+    }
+
+    func buildOptions(for node: ServerNode?) -> [String: Any] {
+        let r = routing
+        let s = settings
+        var o: [String: Any] = [
+            "mode": s.mode.rawValue, "tun": true, "mtu": s.mtu, "sniffing": s.sniffing, "routeOnly": s.routeOnly,
+            "ipv6": s.ipv6, "logLevel": s.logLevel, "stats": true, "socksPort": s.localSocksPort, "httpPort": s.localHTTPPort,
+            "lanShare": s.lanShare, "probeURL": s.pingURL, "probeMinutes": 3,
+            "dns": ["remote": r.remoteDNS, "direct": r.directDNS, "fakeDNS": r.fakeDNS, "hosts": r.hosts,
+                    "strategy": s.ipv6 ? "UseIP" : "UseIPv4"] as [String: Any],
+            "routing": ["domainStrategy": r.domainStrategy, "bypassLAN": r.bypassLAN, "bypassRU": r.bypassRU, "blockAds": r.blockAds,
+                        "blockQUIC": r.blockQUIC, "directDomains": r.directDomains, "directIPs": r.directIPs,
+                        "proxyDomains": r.proxyDomains, "proxyIPs": r.proxyIPs, "blockDomains": r.blockDomains,
+                        "blockIPs": r.blockIPs] as [String: Any],
+            "fragment": ["enabled": s.fragmentEnabled, "packets": s.fragmentPackets, "length": s.fragmentLength, "interval": s.fragmentInterval] as [String: Any],
+            "mux": ["enabled": s.muxEnabled, "concurrency": s.muxConcurrency, "xudpConcurrency": 16] as [String: Any],
+        ]
+        if s.autoSelect {
+            let group = servers.filter { $0.groupID == (s.autoSelectGroupID ?? node?.groupID) && $0.rawConfig == nil }
+            let pick = Array(group.sorted { ($0.latency ?? 99999) < ($1.latency ?? 99999) }.prefix(12))
+            o["outbounds"] = pick.compactMap { JSON.object($0.outbound) }
+        } else if let node {
+            if let raw = node.rawConfig {
+                o["rawConfig"] = raw
+            } else if let ob = JSON.object(node.outbound) {
+                o["outbounds"] = [ob]
+            }
+        }
+        if let chainID = s.chainServerID, chainID != node?.id, let hop = servers.first(where: { $0.id == chainID }),
+           let ob = JSON.object(hop.outbound) {
+            o["chain"] = [ob]
+        }
+        return o
+    }
+
+    func makePayload(for node: ServerNode?) -> TunnelPayload? {
+        let opts = buildOptions(for: node)
+        // Check the config right here, so mistakes show up before iOS starts the tunnel.
+        var check = opts
+        check["assetDir"] = ""
+        switch Core.buildConfig(JSON.string(check)) {
+        case .failure(let e):
+            toast = "Ошибка конфигурации: \(e.message)"
+            return nil
+        case .success(let cfg):
+            if let e = Core.validate(cfg) {
+                toast = "Xray не принял конфиг: \(e)"
+                return nil
+            }
+        }
+        let r = routing
+        let sub = subscription(for: node)
+        var name = settings.autoSelect ? "Авто · лучший сервер" : (node?.displayName ?? "Напрямую")
+        if let f = node?.flag, !f.isEmpty, !settings.autoSelect { name = f + " " + name }
+        var addresses: [String] = []
+        if let a = node?.address { addresses.append(a) }
+        return TunnelPayload(
+            options: JSON.string(opts), serverName: name, serverAddresses: addresses, mtu: settings.mtu, ipv6: settings.ipv6,
+            excludeLocal: settings.excludeLocal, memoryLimitMB: settings.memoryLimitMB,
+            reconnectOnNetworkChange: settings.reconnectOnNetworkChange, notifications: settings.notifications,
+            geoipURL: r.useGeoFiles ? r.geoipURL : nil, geositeURL: r.useGeoFiles ? r.geositeURL : nil,
+            subscriptionTotal: sub?.total ?? 0, subscriptionUsed: sub?.used ?? 0, subscriptionExpire: sub?.expire)
+    }
+
+    func connect() {
+        guard settings.mode == .direct || selected != nil || settings.autoSelect else {
+            toast = "Сначала добавьте сервер или подписку"
+            return
+        }
+        guard let payload = makePayload(for: selected) else { return }
+        Task {
+            do {
+                try await vpn.save(payload: payload, settings: settings)
+                try vpn.start()
+                haptic()
+            } catch {
+                toast = "Не удалось включить VPN: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Applies changed settings or a new server to a running tunnel.
+    func applyIfConnected() {
+        guard vpn.isConnected, let payload = makePayload(for: selected) else { return }
+        Task {
+            try? await vpn.save(payload: payload, settings: settings)
+            _ = await vpn.send(.reload, payload: try? JSONEncoder().encode(payload))
+        }
+    }
+
+    func select(_ node: ServerNode) {
+        selectedID = node.id
+        haptic()
+        applyIfConnected()
+    }
+
+    func startPolling() {
+        pollTask?.cancel()
+        pollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.pollOnce()
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+    }
+
+    func stopPolling() { pollTask?.cancel(); pollTask = nil }
+
+    private func pollOnce() async {
+        guard vpn.isConnected, let d = await vpn.send(.stats), let st = try? JSONDecoder().decode(TunnelStats.self, from: d) else {
+            if !vpn.isConnected { upSpeed = 0; downSpeed = 0; lastStats = nil }
+            return
+        }
+        let now = Date()
+        if let last = lastStats {
+            let dt = max(0.5, now.timeIntervalSince(lastStatsAt))
+            upSpeed = Double(max(0, st.up - last.up)) / dt
+            downSpeed = Double(max(0, st.down - last.down)) / dt
+        }
+        lastStats = st
+        lastStatsAt = now
+        stats = st
+        speedHistory.append(downSpeed + upSpeed)
+        if speedHistory.count > 60 { speedHistory.removeFirst(speedHistory.count - 60) }
+    }
+
+    // MARK: Ping
+
+    func testAll(_ group: UUID?? = nil) {
+        let list: [ServerNode]
+        if let g = group { list = servers.filter { $0.groupID == g } } else { list = servers }
+        test(list)
+    }
+
+    func test(_ list: [ServerNode]) {
+        let ids = list.map(\.id)
+        guard !ids.isEmpty else { return }
+        testing.formUnion(ids)
+        let method = settings.pingMethod
+        let url = settings.pingURL
+        let timeout = settings.pingTimeoutMs
+        let items = list.map { ($0.id, $0.outbound, $0.address, $0.port) }
+        Task.detached(priority: .userInitiated) {
+            var results: [UUID: Int] = [:]
+            if method == .url {
+                for chunk in stride(from: 0, to: items.count, by: 24) {
+                    let part = Array(items[chunk..<min(chunk + 24, items.count)])
+                    let r = Core.urlTest(outbounds: part.map(\.1), url: url, timeoutMs: timeout)
+                    for (i, it) in part.enumerated() { results[it.0] = i < r.count ? r[i] : -1 }
+                    let snapshot = results
+                    await MainActor.run { self.applyLatency(snapshot) }
+                }
+            } else {
+                await withTaskGroup(of: (UUID, Int).self) { g in
+                    for it in items {
+                        g.addTask { (it.0, Core.tcpPing(host: it.2, port: it.3, timeoutMs: timeout)) }
+                    }
+                    for await (id, ms) in g { results[id] = ms }
+                }
+            }
+            let final = results
+            await MainActor.run {
+                self.applyLatency(final)
+                self.testing.subtract(ids)
+            }
+        }
+    }
+
+    private func applyLatency(_ r: [UUID: Int]) {
+        guard !r.isEmpty else { return }
+        var copy = servers
+        for i in copy.indices {
+            if let v = r[copy[i].id] {
+                copy[i].latency = v
+                copy[i].testedAt = Date()
+                testing.remove(copy[i].id)
+            }
+        }
+        servers = copy
+    }
+
+    /// Picks the server with the lowest delay and connects to it.
+    func connectBest(in group: UUID?) {
+        let list = servers.filter { group == nil || $0.groupID == group }
+        if let best = list.filter({ ($0.latency ?? -1) > 0 }).min(by: { $0.latency! < $1.latency! }) {
+            select(best)
+            if !vpn.isConnected { connect() }
+            toast = "Выбран \(best.displayName) · \(best.latency!) мс"
+        } else {
+            toast = "Сначала проверьте пинг"
+            test(list)
+        }
+    }
+
+    // MARK: Import
+
+    func handle(text: String) {
+        let item = Importer.classify(text)
+        process(item)
+    }
+
+    func process(_ item: ImportItem) {
+        switch item {
+        case .servers(let nodes):
+            add(nodes: nodes)
+        case .subscription(let url, let name):
+            Task { await addSubscription(url: url, name: name) }
+        case .routing(let p):
+            routings.append(p)
+            settings.routingID = p.id
+            toast = "Профиль «\(p.name)» добавлен и включён"
+            applyIfConnected()
+        case .backup(let d):
+            restore(d)
+        case .nothing(let reason):
+            toast = reason
+        }
+    }
+
+    func add(nodes: [ServerNode], group: UUID? = nil) {
+        var list = nodes
+        for i in list.indices { list[i].groupID = group }
+        let existing = Set(servers.filter { $0.groupID == group }.map(\.link))
+        let fresh = list.filter { $0.link.isEmpty || !existing.contains($0.link) }
+        servers.append(contentsOf: fresh)
+        if selectedID == nil { selectedID = fresh.first?.id }
+        toast = fresh.isEmpty ? "Такие серверы уже есть" : "Добавлено серверов: \(fresh.count)"
+        haptic()
+    }
+
+    func addSubscription(url: String, name: String?) async {
+        if subscriptions.contains(where: { $0.url == url }) {
+            toast = "Эта подписка уже добавлена"
+            return
+        }
+        let sub = Subscription(name: name ?? URL(string: url)?.host ?? "Подписка", url: url)
+        subscriptions.append(sub)
+        await update(sub.id, firstTime: true)
+    }
+
+    func updateAll(onlyDue: Bool = false) async {
+        for sub in subscriptions {
+            if onlyDue {
+                guard sub.autoUpdate else { continue }
+                if let last = sub.lastUpdated, Date().timeIntervalSince(last) < Double(sub.updateIntervalHours) * 3600 { continue }
+            }
+            await update(sub.id)
+        }
+        Notifier.scheduleExpiry(subscriptions, settings: settings.notifications)
+    }
+
+    func update(_ id: UUID, firstTime: Bool = false) async {
+        guard let sub = subscriptions.first(where: { $0.id == id }) else { return }
+        updatingSubs.insert(id)
+        defer { updatingSubs.remove(id) }
+        do {
+            let r = try await SubscriptionService.fetch(sub.url, userAgent: sub.userAgent ?? settings.subscriptionUA, sendHWID: settings.sendHWID)
+            guard let idx = subscriptions.firstIndex(where: { $0.id == id }) else { return }
+            var s = subscriptions[idx]
+            if let t = r.title, !t.isEmpty { s.name = t }
+            s.upload = r.upload ?? s.upload
+            s.download = r.download ?? s.download
+            s.total = r.total ?? s.total
+            s.expire = r.expire ?? s.expire
+            if let h = r.updateIntervalHours, h > 0 { s.updateIntervalHours = h }
+            s.supportURL = r.supportURL ?? s.supportURL
+            s.webPageURL = r.webPageURL ?? s.webPageURL
+            let newAnnounce = r.announce?.trimmed
+            if let a = newAnnounce, !a.isEmpty, a != s.announce {
+                Notifier.post(.announcement, title: s.name, body: a, settings: settings.notifications, id: "announce-\(id)")
+                announcement = (s.name, a)
+            }
+            s.announce = newAnnounce
+            s.lastUpdated = Date()
+            s.lastError = nil
+            // Merge: keep ids (and the selection) of servers that are still there.
+            let old = servers.filter { $0.groupID == id }
+            var byLink: [String: ServerNode] = [:]
+            for o in old { byLink[o.link.isEmpty ? o.name : o.link] = o }
+            var merged: [ServerNode] = []
+            for var n in r.nodes {
+                n.groupID = id
+                if let prev = byLink[n.link.isEmpty ? n.name : n.link] {
+                    n.id = prev.id
+                    n.latency = prev.latency
+                    n.testedAt = prev.testedAt
+                    n.favorite = prev.favorite
+                }
+                merged.append(n)
+            }
+            let added = merged.count - Set(merged.map(\.id)).intersection(old.map(\.id)).count
+            s.serverCount = merged.count
+            subscriptions[idx] = s
+            var rest = servers.filter { $0.groupID != id }
+            if let firstIndex = servers.firstIndex(where: { $0.groupID == id }) {
+                rest.insert(contentsOf: merged, at: min(firstIndex, rest.count))
+            } else {
+                rest.append(contentsOf: merged)
+            }
+            servers = rest
+            if selectedID == nil || !servers.contains(where: { $0.id == selectedID }) { selectedID = merged.first?.id }
+            if let routing = r.routing, firstTime || routing.contains("onadd") {
+                if case .routing(let p) = Importer.classify(routing) {
+                    if !routings.contains(where: { $0.name == p.name }) {
+                        routings.append(p)
+                        settings.routingID = p.id
+                    }
+                }
+            }
+            if !firstTime {
+                Notifier.post(.subscriptionUpdated, title: "Подписка обновлена", body: "\(s.name): \(merged.count) серверов\(added > 0 ? ", новых \(added)" : "")", settings: settings.notifications)
+            } else {
+                toast = "Подписка «\(s.name)»: \(merged.count) серверов"
+            }
+            if let total = r.total, total > 0, settings.notifications.quotaWarning {
+                let pct = Int(s.usedFraction * 100)
+                if pct >= settings.notifications.quotaPercent {
+                    Notifier.post(.quota, title: "Трафик подписки на исходе", body: "\(s.name): использовано \(pct)%", settings: settings.notifications, id: "quota-\(id)")
+                }
+            }
+        } catch {
+            if let idx = subscriptions.firstIndex(where: { $0.id == id }) {
+                subscriptions[idx].lastError = error.localizedDescription
+            }
+            if firstTime { toast = "Подписка: \(error.localizedDescription)" }
+            Notifier.post(.subscriptionError, title: "Подписка не обновилась", body: "\(sub.name): \(error.localizedDescription)", settings: settings.notifications, id: "suberr-\(id)")
+        }
+    }
+
+    func delete(subscription id: UUID) {
+        subscriptions.removeAll { $0.id == id }
+        servers.removeAll { $0.groupID == id }
+    }
+
+    func delete(server id: UUID) {
+        servers.removeAll { $0.id == id }
+        if selectedID == id { selectedID = servers.first?.id }
+    }
+
+    // MARK: Backup
+
+    func backup() -> Data {
+        struct Backup: Encodable {
+            var auroraBackup = 1
+            var servers: [ServerNode]
+            var subscriptions: [Subscription]
+            var routings: [RoutingProfile]
+            var settings: AppSettings
+        }
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted]
+        enc.dateEncodingStrategy = .secondsSince1970
+        return (try? enc.encode(Backup(servers: servers, subscriptions: subscriptions, routings: routings, settings: settings))) ?? Data()
+    }
+
+    func restore(_ d: Data) {
+        struct Backup: Decodable {
+            var servers: [ServerNode]
+            var subscriptions: [Subscription]
+            var routings: [RoutingProfile]
+            var settings: AppSettings
+        }
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .secondsSince1970
+        guard let b = try? dec.decode(Backup.self, from: d) else { toast = "Файл резервной копии повреждён"; return }
+        servers = b.servers
+        subscriptions = b.subscriptions
+        routings = b.routings.isEmpty ? [.russia, .global] : b.routings
+        settings = b.settings
+        selectedID = servers.first?.id
+        toast = "Восстановлено: \(servers.count) серверов, \(subscriptions.count) подписок"
+    }
+
+    func shareLink(_ node: ServerNode) -> String { node.link.isEmpty ? (node.rawConfig ?? node.outbound) : node.link }
+
+    func haptic() {
+        guard settings.haptics else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    }
+}

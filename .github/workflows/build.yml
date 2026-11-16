@@ -3,6 +3,8 @@ on:
   push:
     paths-ignore:
       - 'preview/**'
+      - 'Aurora/**'
+      - '.github/workflows/aurora.yml'
   workflow_dispatch:
 concurrency:
   group: build-${{ github.ref }}

@@ -1,0 +1,7 @@
+Frameworks/
+build/
+*.xcodeproj
+Payload/
+*.ipa
+App/Info.plist
+Tunnel/Info.plist
