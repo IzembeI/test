@@ -431,7 +431,7 @@ func buildConfig(o buildOptions) (map[string]any, error) {
 		cfg["policy"] = map[string]any{"levels": map[string]any{"0": map[string]any{"handshake": 4, "connIdle": 300, "uplinkOnly": 1, "downlinkOnly": 1, "bufferSize": 4}}}
 	}
 	if o.DNS.FakeDNS {
-		cfg["fakedns"] = []any{map[string]any{"ipPool": "198.18.0.0/15", "poolSize": 4096}}
+		cfg["fakedns"] = []any{map[string]any{"ipPool": "198.18.0.0/16", "poolSize": 4096}}
 	}
 	return cfg, nil
 }

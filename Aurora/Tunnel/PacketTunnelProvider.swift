@@ -98,7 +98,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private func networkSettings(_ p: TunnelPayload) -> NEPacketTunnelNetworkSettings {
         let s = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "254.1.1.1")
         s.mtu = NSNumber(value: p.mtu)
-        let v4 = NEIPv4Settings(addresses: ["172.19.0.1"], subnetMasks: ["255.255.255.252"])
+        let v4 = NEIPv4Settings(addresses: ["198.19.0.1"], subnetMasks: ["255.255.255.252"])
         v4.includedRoutes = [NEIPv4Route.default()]
         var excluded: [NEIPv4Route] = []
         if p.excludeLocal {
@@ -112,7 +112,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         v4.excludedRoutes = excluded
         s.ipv4Settings = v4
-        if p.ipv6 {
+        // IPv6 always goes into the tunnel, even when it is off, so it cannot leak past it.
+        do {
             let v6 = NEIPv6Settings(addresses: ["fd66:6172:6f72::1"], networkPrefixLengths: [126])
             v6.includedRoutes = [NEIPv6Route.default()]
             var ex6: [NEIPv6Route] = []
@@ -126,7 +127,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             v6.excludedRoutes = ex6
             s.ipv6Settings = v6
         }
-        let dns = NEDNSSettings(servers: p.ipv6 ? ["172.19.0.2", "fd66:6172:6f72::2"] : ["172.19.0.2"])
+        let dns = NEDNSSettings(servers: p.ipv6 ? ["198.19.0.2", "fd66:6172:6f72::2"] : ["198.19.0.2"])
         dns.matchDomains = [""]
         s.dnsSettings = dns
         return s
