@@ -45,6 +45,9 @@ struct HomeView: View {
                 }
             }
             .onReceive(clock) { now = $0 }
+            .onChange(of: vpn.status) { st in
+                if st == .connected { model.startPolling() }
+            }
         }
     }
 

@@ -40,6 +40,9 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: Aurora
+        CFBundleDevelopmentRegion: ru
+        CFBundleLocalizations:
+          - ru
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
@@ -95,6 +98,7 @@ targets:
       path: Tunnel/Info.plist
       properties:
         CFBundleDisplayName: Aurora Tunnel
+        CFBundleDevelopmentRegion: ru
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:

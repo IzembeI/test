@@ -39,7 +39,9 @@ func SetMemoryLimit(megabytes int) {
 	if megabytes <= 0 {
 		return
 	}
-	debug.SetGCPercent(10)
+	// The soft limit already makes the GC work hard near the ceiling, so a
+	// moderate GOGC keeps CPU free for traffic the rest of the time.
+	debug.SetGCPercent(50)
 	debug.SetMemoryLimit(int64(megabytes) * 1024 * 1024)
 }
 
@@ -87,7 +89,7 @@ func startFreeLoop() {
 	stop := make(chan struct{})
 	freeStop = stop
 	go func() {
-		t := time.NewTicker(2 * time.Second)
+		t := time.NewTicker(20 * time.Second)
 		defer t.Stop()
 		for {
 			select {

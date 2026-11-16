@@ -42,6 +42,9 @@ type buildOptions struct {
 	ConnIdle int `json:"connIdle"`
 	// UseConfigDNS keeps the "dns" section of a full JSON config.
 	UseConfigDNS bool `json:"useConfigDNS"`
+	// BufferKB is the per-connection buffer; Xray's arm64 default is 4 KB,
+	// which caps download speed.
+	BufferKB int `json:"bufferKB"`
 }
 
 type dNSOptions struct {
@@ -189,7 +192,11 @@ func policyLevel(o buildOptions) map[string]any {
 	if idle <= 0 {
 		idle = 300
 	}
-	return map[string]any{"0": map[string]any{"handshake": 4, "connIdle": idle, "uplinkOnly": 1, "downlinkOnly": 1, "bufferSize": 4}}
+	buf := o.BufferKB
+	if buf <= 0 {
+		buf = 4
+	}
+	return map[string]any{"0": map[string]any{"handshake": 4, "connIdle": idle, "uplinkOnly": 1, "downlinkOnly": 1, "bufferSize": buf}}
 }
 
 func logSection(o buildOptions) map[string]any {
@@ -411,6 +418,13 @@ func buildConfig(o buildOptions) (map[string]any, error) {
 	domainStrategy := o.Routing.DomainStrategy
 	if domainStrategy == "" {
 		domainStrategy = "IPIfNonMatch"
+	}
+	// Resolving every unmatched domain only helps when some rule matches by
+	// IP; otherwise it just adds a DNS round trip to each new connection.
+	hasIPRules := len(o.Routing.DirectIPs)+len(o.Routing.ProxyIPs)+len(o.Routing.BlockIPs) > 0 ||
+		(o.Routing.BypassRU && geoip && o.Mode == "rule") || (o.Routing.BypassLAN && geoip)
+	if !hasIPRules {
+		domainStrategy = "AsIs"
 	}
 	routing := map[string]any{"domainStrategy": domainStrategy, "rules": rules}
 	cfg := map[string]any{"log": logSection(o)}

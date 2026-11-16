@@ -113,6 +113,7 @@ struct ServerNode: Codable, Identifiable, Hashable {
     var groupID: UUID?
     var latency: Int?
     var testedAt: Date?
+    var testError: String?
     var favorite = false
     var addedAt = Date()
 
@@ -319,7 +320,8 @@ struct AppSettings: Codable, Hashable {
     var autoSelect = false
     var autoSelectGroupID: UUID?
     // Tunnel
-    var mtu = 1500
+    var mtu = 9000
+    var bufferKB = 64
     var ipv6 = false
     var killSwitch = false
     var excludeLocal = true
@@ -415,6 +417,7 @@ enum Fmt {
         let f = ByteCountFormatter()
         f.countStyle = .binary
         f.allowedUnits = [.useKB, .useMB, .useGB, .useTB]
+        f.allowsNonnumericFormatting = false
         return f.string(fromByteCount: v)
     }
 

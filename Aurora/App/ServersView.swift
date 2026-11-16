@@ -150,6 +150,9 @@ struct ServersView: View {
     private func menu(for node: ServerNode) -> some View {
         Button { model.select(node); if !model.vpn.isConnected { model.connect() } } label: { Label("Подключить", systemImage: "power") }
         Button { model.test([node]) } label: { Label("Проверить пинг", systemImage: "speedometer") }
+        if let e = node.testError, (node.latency ?? 0) < 0 {
+            Button { model.toast = "Почему «нет»: \(e)" } label: { Label("Почему нет ответа?", systemImage: "questionmark.circle") }
+        }
         Button { UIPasteboard.general.string = model.shareLink(node) } label: { Label("Скопировать ссылку", systemImage: "doc.on.doc") }
         Button { qr = model.shareLink(node) } label: { Label("Показать QR", systemImage: "qrcode") }
         Button {
@@ -272,6 +275,9 @@ struct ServerEditView: View {
                     LabeledContent("Порт", value: "\(node.port)")
                     if !node.transportLabel.isEmpty { LabeledContent("Транспорт", value: node.transportLabel) }
                     if let l = node.latency { LabeledContent("Пинг", value: Theme.latencyText(l)) }
+                    if let e = node.testError, (node.latency ?? 0) < 0 {
+                        Text("Ошибка проверки: \(e)").font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                    }
                 }
                 if !node.link.isEmpty {
                     Section("Ссылка") {

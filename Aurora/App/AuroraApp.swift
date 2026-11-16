@@ -49,6 +49,7 @@ struct AuroraApp: App {
                 .tint(Theme.accent(model.settings.accent))
                 .onOpenURL { url in model.handle(text: url.absoluteString) }
                 .task {
+                    model.startPolling()
                     if model.settings.updateSubsOnLaunch { await model.updateAll(onlyDue: true) }
                     if model.settings.autoPingOnOpen { model.testAll() }
                     Notifier.scheduleExpiry(model.subscriptions, settings: model.settings.notifications)

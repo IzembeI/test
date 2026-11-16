@@ -48,3 +48,11 @@ func TestBuildVariants(t *testing.T) {
 		}
 	}
 }
+
+func TestURLTestDetailedErrors(t *testing.T) {
+	r := URLTestDetailed(`[{"config":"{\"outbounds\":[{\"protocol\":\"vless\",\"settings\":{\"address\":\"127.0.0.1\",\"port\":1,\"id\":\"b831381d-6324-4d53-ad4f-8cda48b30811\",\"encryption\":\"none\"}}],\"routing\":{\"rules\":[{\"inboundTag\":[\"x\"],\"outboundTag\":\"y\"}]}}"},{"outbound":{"protocol":"bogus"}}]`, "http://example.com", 1500, 2)
+	t.Log(r)
+	if !strings.Contains(r, `"delay":-1`) || !strings.Contains(r, "error") {
+		t.Fatal(r)
+	}
+}

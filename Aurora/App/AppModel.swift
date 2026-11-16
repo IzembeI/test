@@ -34,6 +34,20 @@ final class AppModel: ObservableObject {
         settings = Storage.loadMerged(AppSettings.self, "settings", defaults: AppSettings())
         if let s = Storage.defaults.string(forKey: "selected") { selectedID = UUID(uuidString: s) }
         if settings.routingID == nil { settings.routingID = routings.first?.id }
+        migrate()
+    }
+
+    /// One-time updates of saved settings when defaults change.
+    private func migrate() {
+        let v = Storage.defaults.integer(forKey: "settingsVersion")
+        if v < 2 {
+            // Larger packets and buffers: much faster with the userspace TCP stack.
+            if settings.mtu == 1500 { settings.mtu = 9000 }
+            for i in routings.indices where routings[i].domainStrategy == "IPIfNonMatch" && !routings[i].useGeoFiles {
+                routings[i].domainStrategy = "AsIs"
+            }
+        }
+        Storage.defaults.set(2, forKey: "settingsVersion")
     }
 
     // MARK: Derived
@@ -88,7 +102,7 @@ final class AppModel: ObservableObject {
             "mode": s.mode.rawValue, "tun": true, "mtu": s.mtu, "sniffing": s.sniffing, "routeOnly": s.routeOnly,
             "ipv6": s.ipv6, "logLevel": s.logLevel, "stats": true, "socksPort": s.localSocksPort, "httpPort": s.localHTTPPort,
             "lanShare": s.lanShare, "probeURL": s.pingURL, "probeMinutes": 3,
-            "apnsViaProxy": s.apnsViaProxy, "connIdle": s.connIdle, "useConfigDNS": s.useConfigDNS,
+            "apnsViaProxy": s.apnsViaProxy, "connIdle": s.connIdle, "useConfigDNS": s.useConfigDNS, "bufferKB": s.bufferKB,
             "dns": ["remote": r.remoteDNS, "direct": r.directDNS, "fakeDNS": r.fakeDNS, "hosts": r.hosts,
                     "strategy": s.ipv6 ? "UseIP" : "UseIPv4"] as [String: Any],
             "routing": ["domainStrategy": r.domainStrategy, "bypassLAN": r.bypassLAN, "bypassRU": r.bypassRU, "blockAds": r.blockAds,
@@ -228,39 +242,48 @@ final class AppModel: ObservableObject {
         let method = settings.pingMethod
         let url = settings.pingURL
         let timeout = settings.pingTimeoutMs
-        let items = list.map { ($0.id, $0.outbound, $0.address, $0.port) }
+        let items = list.map { n -> (UUID, String, String, Int) in
+            // A full JSON config is tested as a whole: its routing, chains and balancers included.
+            let item: String
+            if let raw = n.rawConfig {
+                item = JSON.string(["config": raw])
+            } else {
+                item = "{\"outbound\":" + n.outbound + "}"
+            }
+            return (n.id, item, n.address, n.port)
+        }
         Task.detached(priority: .userInitiated) {
-            var results: [UUID: Int] = [:]
             if method == .url {
-                for chunk in stride(from: 0, to: items.count, by: 24) {
-                    let part = Array(items[chunk..<min(chunk + 24, items.count)])
-                    let r = Core.urlTest(outbounds: part.map(\.1), url: url, timeoutMs: timeout)
-                    for (i, it) in part.enumerated() { results[it.0] = i < r.count ? r[i] : -1 }
-                    let snapshot = results
+                for chunk in stride(from: 0, to: items.count, by: 12) {
+                    let part = Array(items[chunk..<min(chunk + 12, items.count)])
+                    let r = Core.urlTestDetailed(items: part.map(\.1), url: url, timeoutMs: timeout)
+                    var res: [UUID: (Int, String?)] = [:]
+                    for (i, it) in part.enumerated() { res[it.0] = i < r.count ? r[i] : (-1, "нет результата") }
+                    let snapshot = res
                     await MainActor.run { self.applyLatency(snapshot) }
                 }
             } else {
+                var res: [UUID: (Int, String?)] = [:]
                 await withTaskGroup(of: (UUID, Int).self) { g in
                     for it in items {
                         g.addTask { (it.0, Core.tcpPing(host: it.2, port: it.3, timeoutMs: timeout)) }
                     }
-                    for await (id, ms) in g { results[id] = ms }
+                    for await (id, ms) in g { res[id] = (ms, ms < 0 ? "TCP-подключение к серверу не удалось" : nil) }
                 }
+                let snapshot = res
+                await MainActor.run { self.applyLatency(snapshot) }
             }
-            let final = results
-            await MainActor.run {
-                self.applyLatency(final)
-                self.testing.subtract(ids)
-            }
+            await MainActor.run { self.testing.subtract(ids) }
         }
     }
 
-    private func applyLatency(_ r: [UUID: Int]) {
+    private func applyLatency(_ r: [UUID: (Int, String?)]) {
         guard !r.isEmpty else { return }
         var copy = servers
         for i in copy.indices {
             if let v = r[copy[i].id] {
-                copy[i].latency = v
+                copy[i].latency = v.0
+                copy[i].testError = v.1
                 copy[i].testedAt = Date()
                 testing.remove(copy[i].id)
             }

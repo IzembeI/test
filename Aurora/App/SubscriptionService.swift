@@ -59,9 +59,18 @@ enum SubscriptionService {
 
     private static func header(_ headers: [AnyHashable: Any], _ name: String) -> String? {
         for (k, v) in headers {
-            if let ks = k as? String, ks.lowercased() == name { return v as? String }
+            if let ks = k as? String, ks.lowercased() == name, let value = v as? String { return fixEncoding(value) }
         }
         return nil
+    }
+
+    /// HTTP header values reach Foundation as Latin-1; panels send UTF-8, so
+    /// the bytes are reinterpreted when that yields valid text.
+    static func fixEncoding(_ s: String) -> String {
+        guard s.unicodeScalars.contains(where: { $0.value > 0x7F && $0.value <= 0xFF }),
+              let bytes = s.data(using: .isoLatin1),
+              let utf8 = String(data: bytes, encoding: .utf8) else { return s }
+        return utf8
     }
 
     /// "base64:..." values are decoded, others are used as they are.

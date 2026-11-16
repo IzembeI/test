@@ -209,3 +209,131 @@ func encodeInts(v []int) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
+
+type testItem struct {
+	Outbound map[string]any `json:"outbound"`
+	Config   string         `json:"config"`
+}
+
+type testResult struct {
+	Delay int    `json:"delay"`
+	Error string `json:"error,omitempty"`
+}
+
+// URLTestDetailed tests a JSON array of items: {"outbound": {...}} for a
+// single outbound, or {"config": "<full Xray JSON>"} which is run as a whole
+// (its own routing, balancers and chains). The result is a JSON array of
+// {"delay": ms or -1, "error": "..."} in the same order.
+func URLTestDetailed(itemsJSON string, testURL string, timeoutMs int, concurrency int) string {
+	var items []testItem
+	if err := json.Unmarshal([]byte(itemsJSON), &items); err != nil {
+		return "[]"
+	}
+	if testURL == "" {
+		testURL = "https://www.gstatic.com/generate_204"
+	}
+	if timeoutMs <= 0 {
+		timeoutMs = 6000
+	}
+	if concurrency <= 0 {
+		concurrency = 6
+	}
+	results := make([]testResult, len(items))
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	for i, it := range items {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, it testItem) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			results[i] = testOne(it, testURL, timeoutMs)
+		}(i, it)
+	}
+	wg.Wait()
+	b, _ := json.Marshal(results)
+	return string(b)
+}
+
+func testOne(it testItem, testURL string, timeoutMs int) testResult {
+	ports, err := freePorts(1)
+	if err != nil {
+		return testResult{Delay: -1, Error: err.Error()}
+	}
+	var cfgJSON string
+	if strings.TrimSpace(it.Config) != "" {
+		cfgJSON, err = wrapFullConfig(it.Config, ports[0])
+		if err != nil {
+			return testResult{Delay: -1, Error: err.Error()}
+		}
+	} else if it.Outbound != nil {
+		cfgJSON = buildTestConfig([]map[string]any{it.Outbound}, ports, []bool{true})
+	} else {
+		return testResult{Delay: -1, Error: "empty item"}
+	}
+	cfg, err := core.LoadConfig("json", strings.NewReader(cfgJSON))
+	if err != nil {
+		return testResult{Delay: -1, Error: "config: " + err.Error()}
+	}
+	inst, err := core.New(cfg)
+	if err != nil {
+		return testResult{Delay: -1, Error: "init: " + err.Error()}
+	}
+	if err := inst.Start(); err != nil {
+		_ = inst.Close()
+		return testResult{Delay: -1, Error: "start: " + err.Error()}
+	}
+	defer inst.Close()
+	ms, err := measureErr(testURL, ports[0], timeoutMs)
+	if err != nil {
+		return testResult{Delay: -1, Error: err.Error()}
+	}
+	return testResult{Delay: ms}
+}
+
+// wrapFullConfig replaces the inbounds of a full config with one local SOCKS
+// inbound and keeps everything else, so traffic follows the config's own
+// routing. Logs, stats and APIs are dropped.
+func wrapFullConfig(raw string, port int) (string, error) {
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		return "", err
+	}
+	cfg["inbounds"] = []any{map[string]any{"tag": "test-in", "listen": "127.0.0.1", "port": port, "protocol": "socks",
+		"settings": map[string]any{"udp": false, "auth": "noauth"},
+		"sniffing": map[string]any{"enabled": true, "destOverride": []string{"http", "tls"}, "routeOnly": true}}}
+	cfg["log"] = map[string]any{"loglevel": "none"}
+	for _, k := range []string{"api", "stats", "metrics", "reverse"} {
+		delete(cfg, k)
+	}
+	// Rules bound to inbound tags of the original config would never match
+	// the test inbound; keep them, they are harmless.
+	b, err := json.Marshal(cfg)
+	return string(b), err
+}
+
+func measureErr(testURL string, port int, timeoutMs int) (int, error) {
+	proxy, _ := url.Parse("socks5://127.0.0.1:" + strconv.Itoa(port))
+	tr := &http.Transport{Proxy: http.ProxyURL(proxy), DisableKeepAlives: true}
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Transport: tr, Timeout: time.Duration(timeoutMs) * time.Millisecond}
+	req, err := http.NewRequest(http.MethodGet, testURL, nil)
+	if err != nil {
+		return -1, err
+	}
+	start := time.Now()
+	resp, err := client.Do(req)
+	if err != nil {
+		msg := err.Error()
+		if i := strings.LastIndex(msg, ": "); i >= 0 && len(msg) > 160 {
+			msg = msg[i+2:]
+		}
+		return -1, errString(msg)
+	}
+	_ = resp.Body.Close()
+	ms := int(time.Since(start).Milliseconds())
+	if ms < 1 {
+		ms = 1
+	}
+	return ms, nil
+}

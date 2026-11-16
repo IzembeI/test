@@ -279,6 +279,13 @@ struct ConnectionSettingsView: View {
                 Toggle("Sniffing (определение доменов)", isOn: $model.settings.sniffing)
                 Toggle("Sniffing только для маршрутизации", isOn: $model.settings.routeOnly)
                 Stepper("Лимит памяти ядра: \(model.settings.memoryLimitMB) МБ", value: $model.settings.memoryLimitMB, in: 20...45, step: 5)
+                Stepper("Буфер соединения: \(model.settings.bufferKB) КБ", value: $model.settings.bufferKB, in: 4...512, step: model.settings.bufferKB < 64 ? 4 : 64)
+                Button("Максимальная скорость") {
+                    model.settings.mtu = 9000
+                    model.settings.bufferKB = 128
+                    model.settings.memoryLimitMB = 45
+                    model.toast = "MTU 9000, буфер 128 КБ — переподключитесь"
+                }
                 Picker("Уровень журнала", selection: $model.settings.logLevel) {
                     ForEach(["none", "error", "warning", "info", "debug"], id: \.self) { Text($0).tag($0) }
                 }

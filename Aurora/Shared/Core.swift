@@ -65,6 +65,16 @@ enum Core {
         return v
     }
 
+    /// items: JSON objects {"outbound": {...}} or {"config": "..."}.
+    static func urlTestDetailed(items: [String], url: String, timeoutMs: Int, concurrency: Int = 6) -> [(Int, String?)] {
+        struct R: Decodable { var delay: Int; var error: String? }
+        let out = CorebridgeURLTestDetailed("[" + items.joined(separator: ",") + "]", url, timeoutMs, concurrency)
+        guard let d = out.data(using: .utf8), let v = try? JSONDecoder().decode([R].self, from: d) else {
+            return Array(repeating: (-1, "ядро не вернуло результат"), count: items.count)
+        }
+        return v.map { ($0.delay, $0.error) }
+    }
+
     static func tcpPing(host: String, port: Int, timeoutMs: Int) -> Int {
         CorebridgeTCPPing(host, port, timeoutMs)
     }
