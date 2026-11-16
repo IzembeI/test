@@ -20,9 +20,9 @@ jobs:
         with:
           go-version-file: Aurora/Core/go.mod
           cache-dependency-path: Aurora/Core/go.sum
-      - name: Cache Xray framework
+      - name: Restore Xray framework
         id: fwcache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: Aurora/Frameworks/Corebridge.xcframework
           key: corebridge-${{ hashFiles('Aurora/Core/*.go', 'Aurora/Core/go.sum', 'Aurora/Core/go.mod') }}
@@ -37,6 +37,12 @@ jobs:
           gomobile bind -target ios -iosversion 15.0 -trimpath -ldflags="-s -w -buildid=" \
             -o ../Frameworks/Corebridge.xcframework .
           ls -la ../Frameworks/Corebridge.xcframework
+      - name: Save Xray framework
+        if: steps.fwcache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: Aurora/Frameworks/Corebridge.xcframework
+          key: corebridge-${{ hashFiles('Aurora/Core/*.go', 'Aurora/Core/go.sum', 'Aurora/Core/go.mod') }}
       - name: Generate project
         run: |
           brew install xcodegen
