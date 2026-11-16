@@ -116,14 +116,20 @@ final class AppModel: ObservableObject {
         return o
     }
 
-    func makePayload(for node: ServerNode?) -> TunnelPayload? {
-        let opts = buildOptions(for: node)
+    func makePayload(for node: ServerNode?, directTest: Bool = false) -> TunnelPayload? {
+        var opts = buildOptions(for: node)
+        if directTest {
+            opts["mode"] = "direct"
+            opts.removeValue(forKey: "outbounds")
+            opts.removeValue(forKey: "rawConfig")
+            opts.removeValue(forKey: "chain")
+        }
         // Check the config right here, so mistakes show up before iOS starts the tunnel.
         var check = opts
         check["assetDir"] = ""
         switch Core.buildConfig(JSON.string(check)) {
         case .failure(let e):
-            toast = "Ошибка конфигурации: \(e.message)"
+            toast = e.message == "no server selected" ? "Сначала добавьте сервер или подписку (вкладка «Серверы»)" : "Ошибка конфигурации: \(e.message)"
             return nil
         case .success(let cfg):
             if let e = Core.validate(cfg) {
@@ -133,7 +139,7 @@ final class AppModel: ObservableObject {
         }
         let r = routing
         let sub = subscription(for: node)
-        var name = settings.autoSelect ? "Авто · лучший сервер" : (node?.displayName ?? "Напрямую")
+        var name = directTest ? "Проверка подписи" : settings.autoSelect ? "Авто · лучший сервер" : (node?.displayName ?? "Напрямую")
         if let f = node?.flag, !f.isEmpty, !settings.autoSelect { name = f + " " + name }
         var addresses: [String] = []
         if let a = node?.address { addresses.append(a) }
@@ -293,6 +299,35 @@ final class AppModel: ObservableObject {
                 try? vpn.start()
             }
         }
+    }
+
+    /// Full check of the signature: saves the VPN profile, starts the tunnel
+    /// in direct mode (no server needed) and reports whether it came up.
+    func runSigningCheck() async -> String {
+        guard let payload = makePayload(for: nil, directTest: true) else { return toast ?? "Не удалось собрать конфиг" }
+        do {
+            try await vpn.save(payload: payload, settings: settings)
+        } catch {
+            return "Шаг 1 из 2 не пройден. " + SigningAdvice.explain(error)
+        }
+        if vpn.isConnected { return "VPN-профиль создан, туннель уже работает — подпись в порядке." }
+        do {
+            try vpn.start()
+        } catch {
+            return "Профиль создан, но запуск не удался: " + SigningAdvice.explain(error)
+        }
+        for _ in 0..<30 {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            if vpn.status == .connected {
+                vpn.stop()
+                return "Всё работает: iOS разрешила VPN и расширение запустилось. Добавьте сервер и подключайтесь."
+            }
+            if vpn.status == .disconnected || vpn.status == .invalid { break }
+        }
+        try? await Task.sleep(nanoseconds: 800_000_000)
+        let reason = vpn.lastError ?? "расширение не запустилось"
+        vpn.stop()
+        return "Профиль создан, но туннель не поднялся: \(reason). Скорее всего, сертификат не разрешает Packet Tunnel для VPN-расширения."
     }
 
     /// Picks the server with the lowest delay and connects to it.

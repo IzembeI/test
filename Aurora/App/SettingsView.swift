@@ -497,6 +497,8 @@ struct ConfigPreviewView: View {
 
 struct SigningView: View {
     @EnvironmentObject var model: AppModel
+    @State private var checking = false
+    @State private var result: String?
 
     var body: some View {
         let app = Provision.current
@@ -529,16 +531,23 @@ struct SigningView: View {
                 LabeledContent("App Group", value: AppInfo.appGroup)
             }
             Section {
-                Button("Проверить: создать VPN-профиль") {
-                    guard let payload = model.makePayload(for: model.selected) else { return }
+                Button {
+                    checking = true
+                    result = nil
                     Task {
-                        do {
-                            try await model.vpn.save(payload: payload, settings: model.settings)
-                            model.toast = "VPN-профиль создан — iOS разрешила Network Extension"
-                        } catch {
-                            model.toast = SigningAdvice.explain(error)
-                        }
+                        result = await model.runSigningCheck()
+                        checking = false
                     }
+                } label: {
+                    HStack {
+                        Text("Проверить VPN (сервер не нужен)")
+                        Spacer()
+                        if checking { ProgressView() }
+                    }
+                }
+                .disabled(checking)
+                if let r = result {
+                    Text(r).font(.footnote)
                 }
             } footer: {
                 Text("Для подписи в ESign/Feather и подобных: сертификат должен поддерживать Network Extensions; не включайте «Удаление URL схемы», иначе перестанут открываться ссылки happ:// и vless://.")
@@ -551,7 +560,7 @@ struct SigningView: View {
         switch (Provision.allowsPacketTunnel(app), Provision.allowsPacketTunnel(tunnel)) {
         case (true?, true?), (nil, true?): return "Профиль разрешает Packet Tunnel — VPN должен включаться."
         case (false?, _), (_, false?): return "Профиль подписи НЕ разрешает Network Extension. Приложение работает, но iOS не даст включить VPN. Нужен другой сертификат (с поддержкой Network Extensions) или TrollStore."
-        default: return "Профиль не найден в приложении. Нажмите «Проверить» ниже — iOS сама скажет, разрешён ли VPN."
+        default: return "Профиль не найден в приложении. Нажмите «Проверить VPN» ниже: приложение на пару секунд запустит туннель без сервера и скажет, работает ли подпись."
         }
     }
 
