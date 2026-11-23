@@ -49,6 +49,7 @@ targets:
         LSRequiresIPhoneOS: true
         ITSAppUsesNonExemptEncryption: false
         NSCameraUsageDescription: Камера нужна, чтобы сканировать QR-коды серверов и подписок.
+        NSFaceIDUsageDescription: Подтвердите личность для выдачи и управления ключами Aurora.
         NSLocalNetworkUsageDescription: Нужен для локального прокси и проверки серверов.
         NSPhotoLibraryUsageDescription: Доступ к фото нужен, чтобы прочитать QR-код с картинки.
         UIBackgroundModes:

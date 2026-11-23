@@ -12,6 +12,9 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
+                    NavigationLink { LicenseView() } label: {
+                        Label("Лицензия и ключи", systemImage: "key")
+                    }
                     NavigationLink { NotificationSettingsView() } label: {
                         Label("Уведомления", systemImage: "bell.badge")
                     }

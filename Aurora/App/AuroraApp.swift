@@ -27,6 +27,19 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         scheduleRefresh()
         let work = Task { @MainActor in
             let model = AppModel()
+            let license = LicenseCenter.shared
+            do {
+                try license.reload()
+                try? await license.renewIfNeeded()
+                guard license.status?.valid == true else {
+                    task.setTaskCompleted(success: false)
+                    return
+                }
+                try await model.vpn.updateLease(try license.checkout().token)
+            } catch {
+                task.setTaskCompleted(success: false)
+                return
+            }
             await model.updateAll(onlyDue: true)
             task.setTaskCompleted(success: true)
         }
@@ -38,39 +51,82 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 struct AuroraApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var model = AppModel()
+    @ObservedObject private var license = LicenseCenter.shared
     @Environment(\.scenePhase) private var phase
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            Group {
+                if license.status?.valid == true {
+                    RootView()
+                        .onOpenURL { url in model.handle(text: url.absoluteString) }
+                        .task {
+                            model.startPolling()
+                            if model.settings.updateSubsOnLaunch { await model.updateAll(onlyDue: true) }
+                            await model.classifyNetwork()
+                            if model.settings.autoSelect && model.settings.autopilotScanOnOpen {
+                                model.autopilotScan()
+                            } else if model.settings.autoPingOnOpen {
+                                model.testAll()
+                            }
+                            Notifier.scheduleExpiry(model.subscriptions, settings: model.settings.notifications)
+                        }
+                } else {
+                    NavigationStack { LicenseView() }
+                }
+            }
                 .environmentObject(model)
                 .environmentObject(model.vpn)
                 .environmentObject(model.autopilot)
                 .preferredColorScheme(model.settings.theme == .system ? nil : (model.settings.theme == .dark ? .dark : .light))
                 .tint(Theme.accent(model.settings.accent))
-                .onOpenURL { url in model.handle(text: url.absoluteString) }
-                .task {
-                    model.startPolling()
-                    if model.settings.updateSubsOnLaunch { await model.updateAll(onlyDue: true) }
-                    await model.classifyNetwork()
-                    if model.settings.autoSelect && model.settings.autopilotScanOnOpen {
-                        model.autopilotScan()
-                    } else if model.settings.autoPingOnOpen {
-                        model.testAll()
+                .task(id: phase) {
+                    guard phase == .active else { return }
+                    var needsProfileSync = true
+                    while !Task.isCancelled {
+                        do {
+                            let previouslyValid = license.status?.valid
+                            try license.reload()
+                            try? await license.renewIfNeeded()
+                            guard !Task.isCancelled else { return }
+                            if needsProfileSync || previouslyValid != license.status?.valid {
+                                await syncProfile()
+                                needsProfileSync = false
+                            }
+                        } catch {
+                            model.stopPolling()
+                        }
+                        do { try await Task.sleep(nanoseconds: 60_000_000_000) } catch { return }
                     }
-                    Notifier.scheduleExpiry(model.subscriptions, settings: model.settings.notifications)
+                }
+                .onChange(of: license.profileRevision) { _ in
+                    Task { await syncProfile() }
                 }
         }
         .onChange(of: phase) { p in
             switch p {
             case .active:
-                model.startPolling()
+                if license.status?.valid == true { model.startPolling() }
                 Notifier.clearBadge()
             case .background:
                 model.stopPolling()
                 AppDelegate.scheduleRefresh()
             default: break
             }
+        }
+    }
+
+    @MainActor private func syncProfile() async {
+        guard let status = license.status else { return }
+        do {
+            if status.valid {
+                try await model.vpn.updateLease(try license.checkout().token)
+            } else {
+                model.stopPolling()
+                try await model.vpn.updateLease(nil)
+            }
+        } catch {
+            model.vpn.lastError = "Обновление лицензии VPN: \(error.localizedDescription)"
         }
     }
 }

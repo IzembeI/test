@@ -67,6 +67,8 @@ final class VPNController: ObservableObject {
             manager = nil
         }
         let m = manager ?? NETunnelProviderManager()
+        var payload = payload
+        payload.licenseToken = try LicenseCenter.shared.checkout().token
         let proto = (m.protocolConfiguration as? NETunnelProviderProtocol) ?? NETunnelProviderProtocol()
         proto.providerBundleIdentifier = AppInfo.tunnelBundleID
         proto.serverAddress = payload.serverName.isEmpty ? "Aurora" : payload.serverName
@@ -113,7 +115,29 @@ final class VPNController: ObservableObject {
     func start() throws {
         guard let m = manager else { throw CoreError("VPN-профиль не создан") }
         lastError = nil
-        try m.connection.startVPNTunnel(options: ["source": "app" as NSString])
+        let license = try LicenseCenter.shared.checkout()
+        try m.connection.startVPNTunnel(options: ["source": "app" as NSString,
+            "lease": license.token as NSString, "licenseKC": license.kc as NSString, "licenseIFV": license.ifv as NSString])
+    }
+
+    /// Update an existing On Demand profile on renewal, without restarting Xray.
+    func updateLease(_ token: String?) async throws {
+        guard let m = try await NETunnelProviderManager.loadAllFromPreferences().first(where: {
+            ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == AppInfo.tunnelBundleID
+        }), let proto = m.protocolConfiguration as? NETunnelProviderProtocol,
+              let data = proto.providerConfiguration?["payload"] as? Data,
+              var payload = try? JSONDecoder().decode(TunnelPayload.self, from: data),
+              token != payload.licenseToken else { return }
+        payload.licenseToken = token
+        proto.providerConfiguration?["payload"] = try JSONEncoder().encode(payload)
+        m.protocolConfiguration = proto
+        if token == nil { m.isOnDemandEnabled = false }
+        try await m.saveToPreferences()
+        try await m.loadFromPreferences()
+        manager = m
+        update(m.connection)
+        if token == nil { m.connection.stopVPNTunnel() }
+        else if isConnected { _ = await send(.license, payload: token.map { Data($0.utf8) }) }
     }
 
     func stop() {

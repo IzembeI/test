@@ -13,9 +13,7 @@ struct HomeView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    connectButton
-                        .padding(.top, 8)
-                    statusLine
+                    connectionCard
                     Picker("Режим", selection: Binding(get: { model.settings.mode }, set: { model.settings.mode = $0; model.applyIfConnected() })) {
                         ForEach(RouteMode.allCases) { Text($0.title).tag($0) }
                     }
@@ -44,6 +42,7 @@ struct HomeView: View {
                         Button { model.connectBest(in: model.selected?.groupID) } label: { Label("Лучший сервер", systemImage: "bolt") }
                         Button { model.testAll() } label: { Label("Проверить все", systemImage: "speedometer") }
                     } label: { Image(systemName: "plus.circle") }
+                    .accessibilityLabel("Действия с серверами")
                 }
             }
             .onReceive(clock) { now = $0 }
@@ -53,39 +52,37 @@ struct HomeView: View {
         }
     }
 
-    private var connectButton: some View {
+    private var connectionCard: some View {
         let on = vpn.isConnected
-        let busy = vpn.isBusy
-        return Button { model.toggle() } label: {
-            ZStack {
-                Circle()
-                    .fill(on ? AnyShapeStyle(LinearGradient(colors: [Color.accentColor, Color.accentColor.opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing)) : AnyShapeStyle(Color(.secondarySystemGroupedBackground)))
-                    .shadow(color: on ? Color.accentColor.opacity(0.5) : .black.opacity(0.08), radius: on ? 30 : 12, y: 8)
-                Circle()
-                    .strokeBorder(Color.accentColor.opacity(on ? 0 : 0.35), lineWidth: 3)
-                if busy {
-                    ProgressView().controlSize(.large).tint(on ? .white : .accentColor)
-                } else {
-                    Image(systemName: "power")
-                        .font(.system(size: 56, weight: .semibold))
-                        .foregroundStyle(on ? .white : Color.accentColor)
+        let cancelling = vpn.status == .connecting || vpn.status == .reasserting
+        let action = on ? "Отключить VPN" : (cancelling ? "Отменить подключение" : "Подключить VPN")
+        return Card {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: on ? "checkmark.shield.fill" : "shield")
+                    .font(.title2)
+                    .foregroundStyle(Color.primary)
+                    .padding(12)
+                    .background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 14))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(vpn.status.title).font(.title2.weight(.semibold))
+                    if on, let since = vpn.connectedSince {
+                        Text(Fmt.duration(Int64(now.timeIntervalSince(since))))
+                            .font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
+                    }
                 }
+                Spacer(minLength: 0)
+                if vpn.isBusy { ProgressView().accessibilityHidden(true) }
             }
-            .frame(width: 180, height: 180)
-            .animation(.spring(response: 0.4, dampingFraction: 0.7), value: on)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(on ? "Отключить VPN" : "Подключить VPN")
-    }
-
-    private var statusLine: some View {
-        VStack(spacing: 4) {
-            Text(vpn.status.title).font(.title3.weight(.semibold))
-            if vpn.isConnected, let since = vpn.connectedSince {
-                Text(Fmt.duration(Int64(now.timeIntervalSince(since))))
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
+            Button { model.toggle() } label: {
+                Label(action, systemImage: "power")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 44)
             }
+            .buttonStyle(.borderedProminent)
+            .tint(.primary)
+            .foregroundStyle(Color(.systemBackground))
+            .disabled(vpn.status == .disconnecting)
         }
     }
 
@@ -144,6 +141,7 @@ struct HomeView: View {
                     if on { model.startAutopilot() } else { model.settings.autoSelect = false; model.applyIfConnected() }
                 }))
                 .labelsHidden()
+                .accessibilityLabel("Автопилот")
             }
             if model.settings.autoSelect {
                 let pool = model.autopilotPool(autopilot.network)
@@ -171,7 +169,9 @@ struct HomeView: View {
                     }
                     .disabled(model.autopilotBusy)
                     Spacer()
-                    Button { Task { await model.classifyNetwork() } } label: { Image(systemName: "antenna.radiowaves.left.and.right") }
+                    Button { Task { await model.classifyNetwork() } } label: {
+                        Image(systemName: "antenna.radiowaves.left.and.right").frame(minWidth: 44, minHeight: 44)
+                    }
                         .accessibilityLabel("Проверить сеть")
                 }
                 .font(.subheadline)

@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 40
     defaults:
       run:
@@ -26,7 +26,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: Aurora/Frameworks/Corebridge.xcframework
-          key: corebridge-${{ hashFiles('Aurora/Core/*.go', 'Aurora/Core/go.sum', 'Aurora/Core/go.mod') }}
+          key: corebridge-${{ hashFiles('Aurora/Core/**/*.go', 'Aurora/Core/go.sum', 'Aurora/Core/go.mod') }}
       - name: Build Xray framework (gomobile)
         if: steps.fwcache.outputs.cache-hit != 'true'
         working-directory: Aurora/Core
@@ -43,7 +43,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: Aurora/Frameworks/Corebridge.xcframework
-          key: corebridge-${{ hashFiles('Aurora/Core/*.go', 'Aurora/Core/go.sum', 'Aurora/Core/go.mod') }}
+          key: corebridge-${{ hashFiles('Aurora/Core/**/*.go', 'Aurora/Core/go.sum', 'Aurora/Core/go.mod') }}
       - name: Generate project
         run: |
           brew install xcodegen

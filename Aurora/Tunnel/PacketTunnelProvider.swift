@@ -37,6 +37,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// Path changes are acted on once the path holds for 3 s, so a flapping
     /// Wi‑Fi does not restart the core (and cut push) on every blink.
     private var pathWork: DispatchWorkItem?
+    private var lastLicenseCheck = Date.distantPast
 
     // MARK: Start
 
@@ -49,6 +50,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
         payload = p
+        do {
+            try TunnelLicense.apply(token: p.licenseToken, options: options)
+        } catch {
+            completionHandler(fail(error.localizedDescription))
+            return
+        }
         Core.setMemoryLimit(p.memoryLimitMB)
 
         // The network comes first: with the autopilot, Wi‑Fi and cellular get
@@ -324,6 +331,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private func tick() {
         guard let p = payload else { return }
+        if Date().timeIntervalSince(lastLicenseCheck) >= 60 || Date() < lastLicenseCheck {
+            lastLicenseCheck = Date()
+            if let reason = TunnelLicense.currentError() {
+                cancelTunnelWithError(fail(reason))
+                return
+            }
+        }
         let st = Core.stats()
         if let best = st.best, best != lastBest {
             if let previous = lastBest, p.notifications.onServerSwitch {
@@ -512,6 +526,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             completionHandler?(nil); return
         }
         switch req.command {
+        case .license:
+            queue.async {
+                do {
+                    let token = req.payload.flatMap { String(data: $0, encoding: .utf8) }
+                    try TunnelLicense.apply(token: token)
+                    self.payload?.licenseToken = token
+                    completionHandler?(Data("ok".utf8))
+                } catch {
+                    self.cancelTunnelWithError(self.fail(error.localizedDescription))
+                    completionHandler?(nil)
+                }
+            }
         case .stats:
             var st = Core.stats()
             if let p = payload, let best = st.best { st.bestName = names(p)[best] }

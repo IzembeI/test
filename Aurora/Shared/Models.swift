@@ -407,6 +407,7 @@ struct TunnelStats: Codable {
 
 /// Everything the tunnel needs to start, saved in the VPN configuration.
 struct TunnelPayload: Codable {
+    var licenseToken: String?
     var options: String            // BuildOptions JSON for corebridge.BuildConfig
     var serverName: String
     var serverAddresses: [String]
@@ -430,7 +431,7 @@ struct TunnelPayload: Codable {
 }
 
 enum TunnelCommand: String, Codable {
-    case stats, logs, clearLogs, reload, updateGeo, status, notifyTest
+    case stats, logs, clearLogs, reload, updateGeo, status, notifyTest, license
 }
 
 struct TunnelRequest: Codable {

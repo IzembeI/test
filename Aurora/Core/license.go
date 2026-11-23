@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,10 +16,9 @@ import (
 	"github.com/werx/aurora/corebridge/lease"
 )
 
-// licenseRequired turns enforcement on. While false an invalid lease is only
-// logged; the owner flips it once the license Worker is deployed or offline
-// leases are issued.
-const licenseRequired = false
+// The iOS app and packet tunnel require a signed lease. Desktop tools and
+// core integration tests can run independently of a device identity.
+const licenseRequired = runtime.GOOS == "ios"
 
 const (
 	// licenseGrace keeps the VPN working after a lease expires, for phones
@@ -190,16 +190,16 @@ func evaluateLicenseLocked() licenseState {
 		}
 		return st
 	}
-	now := licenseNowLocked(c.St)
 	st.Sub = c.Sub
 	st.Offline = c.Sub == lease.SubOffline
 	st.Exp = c.Exp
 	st.GraceUntil = c.Exp + int64(licenseGrace/time.Second)
-	st.DaysLeft = int(math.Ceil(float64(c.Exp-now) / 86400))
 	if !c.Matches(licKC, licIFV) {
 		st.Reason = "лицензия выдана для другого устройства"
 		return st
 	}
+	now := licenseNowLocked(c.St)
+	st.DaysLeft = int(math.Ceil(float64(c.Exp-now) / 86400))
 	switch {
 	case now > st.GraceUntil:
 		st.Reason = "срок лицензии истёк"
